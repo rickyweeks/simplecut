@@ -349,11 +349,54 @@ export class ProgramEngine {
     return img;
   }
 
+  /** Since when the current frame has been waiting for a decoder (0 = not waiting). */
+  private waitingSince = 0;
+
   private draw(tl: Timeline, frame: Frame): void {
     const { width, height } = FORMATS[tl.settings.format];
     const scale = this.host.scale();
     const cw = Math.max(2, Math.round(width * scale));
     const ch = Math.max(2, Math.round(height * scale));
+
+    // Collect the layers first. If a video is still seeking/decoding, keep showing the
+    // previous picture instead of flashing black (but never wait more than half a second).
+    type Layer = { kind: 'video'; el: HTMLVideoElement } | { kind: 'image'; el: HTMLImageElement } | { kind: 'offline' };
+    const layers: Layer[] = [];
+    let message: string | null = null;
+    let waiting = false;
+    for (const t of videoTracks(tl)) {
+      if (t.hidden) continue;
+      const c = clipAt(tl, t.id, frame);
+      if (!c) continue;
+      const media = this.host.media(c.mediaId);
+      if (!media) continue;
+      if (this.host.offline(media.id)) {
+        layers.push({ kind: 'offline' });
+        message = `Media offline: ${media.name}`;
+        continue;
+      }
+      if (media.kind === 'image') {
+        const url = this.host.url(media);
+        const img = url ? this.image(url) : null;
+        if (img?.complete && img.naturalWidth) layers.push({ kind: 'image', el: img });
+        else if (img && !img.complete) waiting = true;
+        continue;
+      }
+      const v = this.assigned.get(c.id)?.el as HTMLVideoElement | undefined;
+      if (v && v.readyState >= 2 && !v.seeking && v.videoWidth) layers.push({ kind: 'video', el: v });
+      else if (!v && this.host.preparing(media)) message = 'Preparing preview…';
+      else if (v && !v.error) waiting = true;
+    }
+    const now = performance.now();
+    if (waiting) {
+      if (!this.waitingSince) this.waitingSince = now;
+      if (now - this.waitingSince < 500) {
+        this.dirty = true;
+        return;
+      }
+    }
+    this.waitingSince = 0;
+
     if (this.canvas.width !== cw || this.canvas.height !== ch) {
       this.canvas.width = cw;
       this.canvas.height = ch;
@@ -361,7 +404,6 @@ export class ProgramEngine {
     const ctx = this.ctx;
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, cw, ch);
-    let message: string | null = null;
 
     // Same letterbox fit as the export (scale to fit, centered, never cropped).
     const fit = (src: CanvasImageSource, sw: number, sh: number) => {
@@ -371,29 +413,12 @@ export class ProgramEngine {
       const dh = sh * s;
       ctx.drawImage(src, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
     };
-
-    for (const t of videoTracks(tl)) {
-      if (t.hidden) continue;
-      const c = clipAt(tl, t.id, frame);
-      if (!c) continue;
-      const media = this.host.media(c.mediaId);
-      if (!media) continue;
-      if (this.host.offline(media.id)) {
+    for (const layer of layers) {
+      if (layer.kind === 'offline') {
         ctx.fillStyle = '#3a0010';
         ctx.fillRect(0, 0, cw, ch);
-        message = `Media offline: ${media.name}`;
-        continue;
-      }
-      if (media.kind === 'image') {
-        const url = this.host.url(media);
-        const img = url ? this.image(url) : null;
-        if (img?.complete && img.naturalWidth) fit(img, img.naturalWidth, img.naturalHeight);
-        continue;
-      }
-      const s = this.assigned.get(c.id);
-      const v = s?.el as HTMLVideoElement | undefined;
-      if (v && v.readyState >= 2 && v.videoWidth) fit(v, v.videoWidth, v.videoHeight);
-      else if (this.host.preparing(media)) message = 'Preparing preview…';
+      } else if (layer.kind === 'image') fit(layer.el, layer.el.naturalWidth, layer.el.naturalHeight);
+      else fit(layer.el, layer.el.videoWidth, layer.el.videoHeight);
     }
 
     if (message) {

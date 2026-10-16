@@ -9,8 +9,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
+  HARDWARE_ENCODERS,
   buildExportPlan,
   createTimeline,
+  encoderTestArgs,
   ffprobeArgs,
   parseProbe,
   sequentialIds,
@@ -107,10 +109,10 @@ function doc(): ProjectDoc {
   return { media, timeline: { ...tl, settings: { ...tl.settings, locked: true }, clips: Object.fromEntries(clips.map((c) => [c.id, c])) } };
 }
 
-function runExport(name: string, encoder: VideoEncoderId, maxInputsPerPass?: number): string {
+function runExport(name: string, encoder: VideoEncoderId, maxInputsPerPass?: number, hwDecode = false): string {
   const out = join(dir, `${name}.mp4`);
   const tempDir = mkdtempSync(join(dir, 'tmp-'));
-  const plan = buildExportPlan({ doc: doc(), range: { start: 0, end: 390 }, outputPath: out, encoder, tempDir, maxInputsPerPass });
+  const plan = buildExportPlan({ doc: doc(), range: { start: 0, end: 390 }, outputPath: out, encoder, tempDir, maxInputsPerPass, hwDecode });
   for (const f of plan.files) writeFileSync(f.path, f.content);
   for (const job of plan.jobs) execFileSync(ffmpeg, job.args, { stdio: ['ignore', 'ignore', 'pipe'] });
   return out;
@@ -143,6 +145,12 @@ describe.skipIf(!haveBinaries)('export with real FFmpeg', () => {
 
   it('chunked export joins seamlessly and stays frame-accurate', () => {
     checkOutput(runExport('chunked', 'libx264', 3));
+  }, 180_000);
+
+  it('GPU encode + GPU decode (when this machine has a hardware encoder) is frame-accurate', ({ skip }) => {
+    const hw = HARDWARE_ENCODERS.find((id) => spawnSync(ffmpeg, encoderTestArgs(id)).status === 0);
+    if (!hw) return skip();
+    checkOutput(runExport(`gpu-${hw}`, hw, undefined, true));
   }, 180_000);
 
   it('mixes the dialogue and the music bed at full level', () => {

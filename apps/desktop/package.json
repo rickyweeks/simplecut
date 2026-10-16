@@ -12,8 +12,9 @@
     "preview": "electron-vite preview",
     "dist": "node scripts/prepare-bin.mjs && electron-vite build && electron-builder --win --x64",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "vitest run --passWithNoTests",
-    "e2e": "electron-vite build && node e2e/smoke.mjs"
+    "test": "node scripts/prepare-bin.mjs && vitest run",
+    "e2e": "node scripts/prepare-bin.mjs && electron-vite build && node e2e/smoke.mjs && node e2e/extras.mjs",
+    "icon": "node scripts/make-icon.mjs"
   },
   "devDependencies": {
     "@simplecut/core": "workspace:*",

@@ -150,6 +150,9 @@ export function handleKeyDown(e: KeyboardEvent): void {
       case 'a':
         edit.selectAll();
         break;
+      case 'd':
+        ui.toast(shift ? 'Audio crossfades (Shift+Ctrl+D) arrive in Phase 2.' : 'Transitions (Ctrl+D) arrive in Phase 2.');
+        break;
       case 'm':
         ui.set({ dialog: 'export' });
         break;

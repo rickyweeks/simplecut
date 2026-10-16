@@ -38,12 +38,20 @@ export async function startExport(req: ExportStartRequest, send: (e: ExportProgr
   const partial = join(dirname(req.outputPath), `.${basename(req.outputPath, extname(req.outputPath))}.simplecut-partial.mp4`);
   const hw = await encoderDetector.detect();
   const encoders: VideoEncoderId[] = req.encoder === 'software' || hw.length === 0 ? ['libx264'] : [hw[0]!, 'libx264'];
+  // GPU decoding pays off for heavy sources (4K, HEVC…). Each input opens its own decoder,
+  // so it is only used for moderately sized edits; the software retry decodes on the CPU.
+  const heavySources = [...usedMedia].some((id) => {
+    const m = req.doc.media[id];
+    return m?.kind === 'video' && (Math.max(m.width, m.height) > 2560 || (m.videoCodec != null && m.videoCodec !== 'h264'));
+  });
+  const gpuDecode = heavySources && Object.keys(req.doc.timeline.clips).length <= 24;
 
   try {
     for (let i = 0; i < encoders.length; i++) {
       const encoder = encoders[i]!;
       try {
-        const plan = buildExportPlan({ doc: req.doc, range: req.range, outputPath: partial, encoder, tempDir, hwDecode: false });
+        const hwDecode = gpuDecode && encoder !== 'libx264';
+        const plan = buildExportPlan({ doc: req.doc, range: req.range, outputPath: partial, encoder, tempDir, hwDecode });
         for (const f of plan.files) await fs.writeFile(f.path, f.content, 'utf8');
         const durations = plan.jobs.map((j) => j.durationSec);
         send({ fraction: 0, label: plan.jobs[0]!.label, etaSec: null, bytesWritten: 0, encoder });

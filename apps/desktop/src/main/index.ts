@@ -50,6 +50,8 @@ function createWindow(): void {
     show: false,
     backgroundColor: '#000000',
     title: 'SimpleCut',
+    // The packaged .exe carries the icon; in development point at the source PNG.
+    ...(app.isPackaged ? {} : { icon: join(__dirname, '..', '..', 'build', 'icon.png') }),
     // Pure black, frameless-looking title bar that keeps the native Windows controls.
     titleBarStyle: 'hidden',
     titleBarOverlay: { color: '#000000', symbolColor: '#d8d8d8', height: 40 },
