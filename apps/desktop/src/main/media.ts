@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { BrowserWindow, app } from 'electron';
 import {
   PeakAccumulator,
+  expectedThumbnailCount,
   ffprobeArgs,
   needsProxy,
   parseProbe,
@@ -135,10 +136,18 @@ async function makeThumbnails(path: string, dir: string, info: MediaInfo): Promi
   const tdir = join(dir, 'thumbs');
   const metaFile = join(tdir, 'meta.json');
   if (await exists(metaFile)) return { output: tdir, thumbs: JSON.parse(await fs.readFile(metaFile, 'utf8')) as ThumbnailMeta };
+  const countJpegs = async () => (await fs.readdir(tdir)).filter((f) => f.endsWith('.jpg')).length;
   await fs.rm(tdir, { recursive: true, force: true });
   await fs.mkdir(tdir, { recursive: true });
-  await runFfmpeg(thumbnailArgs(path, join(tdir, '%05d.jpg'), info));
-  const count = (await fs.readdir(tdir)).filter((f) => f.endsWith('.jpg')).length;
+  await runFfmpeg(thumbnailArgs(path, join(tdir, '%05d.jpg'), info, { keyframesOnly: true }));
+  let count = await countJpegs();
+  if (count < expectedThumbnailCount(info) / 2) {
+    // Too few keyframes in this file: decode every frame instead (slower, always complete).
+    await fs.rm(tdir, { recursive: true, force: true });
+    await fs.mkdir(tdir, { recursive: true });
+    await runFfmpeg(thumbnailArgs(path, join(tdir, '%05d.jpg'), info, { keyframesOnly: false }));
+    count = await countJpegs();
+  }
   const plan = thumbnailPlan(info);
   const meta: ThumbnailMeta = { intervalSec: plan.intervalSec, height: plan.height, count };
   await fs.writeFile(metaFile, JSON.stringify(meta));

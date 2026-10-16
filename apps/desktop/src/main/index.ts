@@ -11,6 +11,8 @@ import { registerMediaProtocol, registerSchemePrivileges } from './protocol';
 import { findInFolder, projectStorage, recovery } from './storage';
 
 app.setName('SimpleCut');
+// Portable/test mode: keep caches, recovery files and settings in a custom folder.
+if (process.env.SIMPLECUT_USER_DATA) app.setPath('userData', process.env.SIMPLECUT_USER_DATA);
 registerSchemePrivileges();
 
 const isDev = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL;

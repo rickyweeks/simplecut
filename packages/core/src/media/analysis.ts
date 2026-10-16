@@ -44,11 +44,22 @@ export function thumbnailPlan(info: MediaInfo): { intervalSec: number; height: n
   return { intervalSec, height: 72 };
 }
 
-export function thumbnailArgs(src: string, outPattern: string, info: MediaInfo): string[] {
+/** How many thumbnails a complete filmstrip has. */
+export function expectedThumbnailCount(info: MediaInfo): number {
+  return Math.max(1, Math.ceil(Math.max(info.durationSec, 0.1) / thumbnailPlan(info).intervalSec));
+}
+
+/**
+ * Keyframes-only decoding is very fast but yields too few (even zero) thumbnails for files
+ * with long GOPs (screen recordings, short clips with one keyframe); callers then retry
+ * with `keyframesOnly: false`.
+ */
+export function thumbnailArgs(src: string, outPattern: string, info: MediaInfo, opts: { keyframesOnly?: boolean } = {}): string[] {
   const { intervalSec, height } = thumbnailPlan(info);
+  const keyframesOnly = opts.keyframesOnly ?? true;
   return [
     '-hide_banner', '-loglevel', 'error', '-y',
-    '-skip_frame', 'nokey',
+    ...(keyframesOnly ? ['-skip_frame', 'nokey'] : ['-hwaccel', 'auto']),
     '-i', src,
     '-map', '0:v:0',
     '-vf', `fps=1/${intervalSec},scale=-2:${height}`,

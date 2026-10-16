@@ -10,7 +10,9 @@ import { ProgressParser, type FfmpegProgress } from '@simplecut/core';
  * asar archive, so they can be executed).
  */
 function binDir(): string {
-  return app.isPackaged ? join(process.resourcesPath, 'bin') : join(app.getAppPath(), 'resources', 'bin');
+  // Unpackaged, this file runs from out/main/, so resources/ is two levels up (independent
+  // of how Electron was launched).
+  return app.isPackaged ? join(process.resourcesPath, 'bin') : join(__dirname, '..', '..', 'resources', 'bin');
 }
 
 export function ffmpegPath(): string {
