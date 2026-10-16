@@ -1,0 +1,21 @@
+{
+  "name": "@simplecut/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Platform-independent timeline model, editing operations, undo/redo, project files and export graph builder. No Electron, Node or DOM dependencies.",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  }
+}

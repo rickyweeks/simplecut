@@ -1,0 +1,18 @@
+{
+  "name": "simplecut",
+  "private": true,
+  "version": "0.1.0",
+  "description": "SimpleCut — a beginner-friendly video editor for YouTube",
+  "packageManager": "pnpm@10.34.7",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "dev": "pnpm --filter @simplecut/desktop dev",
+    "build": "pnpm --filter @simplecut/desktop build",
+    "dist": "pnpm --filter @simplecut/desktop dist",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "e2e": "pnpm --filter @simplecut/desktop e2e"
+  }
+}

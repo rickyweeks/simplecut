@@ -1,0 +1,10 @@
+packages:
+  - packages/*
+  - apps/*
+
+# pnpm 10 blocks dependency install scripts unless listed here.
+# electron and ffmpeg-static download their binaries in a postinstall step.
+onlyBuiltDependencies:
+  - electron
+  - ffmpeg-static
+  - esbuild

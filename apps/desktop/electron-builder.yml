@@ -1,0 +1,35 @@
+appId: com.simplecut.app
+productName: SimpleCut
+copyright: SimpleCut
+directories:
+  output: release
+  buildResources: build
+files:
+  - out/**
+  - package.json
+  - "!**/*.map"
+# FFmpeg must live outside the asar archive to be executable.
+extraResources:
+  - from: resources/bin
+    to: bin
+    filter:
+      - "*.exe"
+asar: true
+npmRebuild: false
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  executableName: SimpleCut
+  artifactName: SimpleCut-Setup-${version}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  shortcutName: SimpleCut
+fileAssociations:
+  - ext: scut
+    name: SimpleCut Project
+    description: SimpleCut video project
+    role: Editor

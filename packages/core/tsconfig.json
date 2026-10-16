@@ -1,0 +1,9 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // ES library only: no "DOM" and no Node types, so any platform API used here fails to compile.
+    "lib": ["ES2023"],
+    "types": []
+  },
+  "include": ["src", "test"]
+}
