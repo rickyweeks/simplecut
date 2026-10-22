@@ -67,7 +67,9 @@ function captionPreview(styleId: string): string {
   g.addColorStop(1, '#4a2f3d');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
-  ctx.drawImage(renderText({ ...captionText('Welcome back to the channel', styleId), y: 0.7 }, W, H).canvas, 0, 0);
+  // Bigger than real captions so the style is easy to judge at thumbnail size.
+  const t = captionText('Welcome back!', styleId);
+  ctx.drawImage(renderText({ ...t, size: t.size * 2.2, outlineWidth: t.outlineWidth * 2.2, boxPadding: t.boxPadding * 2.2, y: 0.62 }, W, H).canvas, 0, 0);
   url = c.toDataURL('image/jpeg', 0.85);
   previews.set(styleId, url);
   return url;
