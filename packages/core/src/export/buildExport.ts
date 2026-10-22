@@ -364,7 +364,8 @@ function buildGraph(req: ExportRequest, range: Range, opts: { video: boolean; au
             };
             if (g.radius > 0) {
               if (!imgs?.mask) throw new Error('A rounded-corner mask has not been rendered for export.');
-              const m = still('mask', imgs.mask, 'gray');
+              // The mask is the PNG's alpha (exact; a gray conversion could map white to TV-range 235).
+              const m = still('mask', imgs.mask, 'rgba,alphaextract');
               chains.push(`[${cur}][${m}]alphamerge[${label}pm]`);
               cur = `${label}pm`;
             }

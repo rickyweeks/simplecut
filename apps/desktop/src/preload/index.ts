@@ -20,6 +20,8 @@ const api: ScutApi = {
     exportVideo: (defaultName) => ipcRenderer.invoke(IPC.dialogExportVideo, defaultName),
     locateMedia: (fileName) => ipcRenderer.invoke(IPC.dialogLocateMedia, fileName),
     confirm: (opts) => ipcRenderer.invoke(IPC.dialogConfirm, opts),
+    openLut: () => ipcRenderer.invoke(IPC.dialogOpenLut),
+    saveFile: (opts) => ipcRenderer.invoke(IPC.dialogSaveFile, opts),
   },
 
   project: {
@@ -42,6 +44,18 @@ const api: ScutApi = {
     onAsset: (listener) => listen(IPC.mediaAsset, listener),
     analyzeBeats: (path) => ipcRenderer.invoke(IPC.mediaBeats, path),
     denoise: (path, info, strength) => ipcRenderer.invoke(IPC.mediaDenoise, path, info, strength),
+    reverse: (media, inSec, outSec) => ipcRenderer.invoke(IPC.mediaReverse, media, inSec, outSec),
+    silences: (req) => ipcRenderer.invoke(IPC.mediaSilences, req),
+    colorSamples: (path, times) => ipcRenderer.invoke(IPC.mediaColorSamples, path, times),
+    readLut: (path) => ipcRenderer.invoke(IPC.mediaReadLut, path),
+  },
+
+  captions: {
+    modelStatus: () => ipcRenderer.invoke(IPC.captionsStatus),
+    downloadModel: () => ipcRenderer.invoke(IPC.captionsDownload),
+    transcribe: (req) => ipcRenderer.invoke(IPC.captionsTranscribe, req),
+    cancel: () => ipcRenderer.invoke(IPC.captionsCancel),
+    onProgress: (listener) => listen(IPC.captionsProgress, listener),
   },
 
   exporter: {
@@ -50,6 +64,7 @@ const api: ScutApi = {
     cancel: () => ipcRenderer.invoke(IPC.exportCancel),
     onProgress: (listener) => listen(IPC.exportProgress, listener),
     measureLoudness: (req) => ipcRenderer.invoke(IPC.exportLoudness, req),
+    frame: (req) => ipcRenderer.invoke(IPC.exportFrame, req),
   },
 
   shell: {

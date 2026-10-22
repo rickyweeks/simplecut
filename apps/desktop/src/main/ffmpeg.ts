@@ -9,7 +9,7 @@ import { ProgressParser, type FfmpegProgress } from '@simplecut/core';
  * them into resources/bin, which electron-builder ships as extraResources (outside the
  * asar archive, so they can be executed).
  */
-function binDir(): string {
+export function binDir(): string {
   // Unpackaged, this file runs from out/main/, so resources/ is two levels up (independent
   // of how Electron was launched).
   return app.isPackaged ? join(process.resourcesPath, 'bin') : join(__dirname, '..', '..', 'resources', 'bin');

@@ -10,14 +10,21 @@ import {
   expectedThumbnailCount,
   ffprobeArgs,
   needsProxy,
+  parseCube,
   parseProbe,
+  parseSilenceDetect,
+  reverseJobs,
+  silenceDetectArgs,
   posterArgs,
   proxyArgs,
   thumbnailArgs,
   thumbnailPlan,
   waveformArgs,
   type BeatAnalysis,
+  type CubeLut,
   type MediaInfo,
+  type MediaItem,
+  type SilenceSettings,
   type MediaProber,
 } from '@simplecut/core';
 import { IPC, type AssetEvent, type ThumbnailMeta } from '../shared/api';
@@ -269,4 +276,74 @@ export async function prepareMedia(path: string, info: MediaInfo, opts: { forceP
   if (info.kind !== 'image' && (opts.forceProxy || needsProxy(info))) {
     schedule(path, dir, 'proxy', heavy, (emit) => makeProxy(path, dir, info, emit));
   }
+}
+
+// ---------------------------------------------------------------------------
+// Reverse, silence detection, Auto Color samples and LUT files
+// ---------------------------------------------------------------------------
+
+const reverseJobsInflight = new Map<string, Promise<string>>();
+
+/** A reversed copy of [inSec, outSec) of a file, made in chunks and cached next to its other assets. */
+export function reverseMedia(media: MediaItem, inSec: number, outSec: number): Promise<string> {
+  const key = `${media.path}|${inSec.toFixed(3)}|${outSec.toFixed(3)}`;
+  let job = reverseJobsInflight.get(key);
+  if (job) return job;
+  job = (async () => {
+    const dir = await cacheDirFor(media.path);
+    const out = join(dir, `reverse-${Math.round(inSec * 1000)}-${Math.round(outSec * 1000)}.mp4`);
+    if (await exists(out)) return out;
+    const temp = await fs.mkdtemp(join(dir, 'rev-'));
+    try {
+      const part = join(temp, 'reversed.mp4');
+      const { jobs, listPath, listText } = reverseJobs(media, inSec, outSec, temp, part);
+      await fs.writeFile(listPath, listText);
+      for (const j of jobs) await runFfmpeg(j.args);
+      await fs.rename(part, out);
+      return out;
+    } finally {
+      await fs.rm(temp, { recursive: true, force: true }).catch(() => {});
+    }
+  })().finally(() => reverseJobsInflight.delete(key));
+  reverseJobsInflight.set(key, job);
+  return job;
+}
+
+/** Pauses in part of a file's audio (silencedetect). */
+export async function detectSilences(path: string, startSec: number, durationSec: number, settings: SilenceSettings): Promise<{ start: number; end: number }[]> {
+  let log = '';
+  await runFfmpeg(silenceDetectArgs(path, startSec, durationSec, settings), {
+    onStderr: (t) => {
+      log += t;
+    },
+  });
+  return parseSilenceDetect(log, durationSec);
+}
+
+/** 64x36 RGB samples of the picture at each time (BT.709, as the preview shows it). */
+export async function colorSamples(path: string, times: number[]): Promise<Uint8Array> {
+  const parts: Buffer[] = [];
+  for (const t of times) {
+    const chunks: Buffer[] = [];
+    await runFfmpeg(
+      ['-hide_banner', '-loglevel', 'error', '-nostdin', '-ss', Math.max(0, t).toFixed(3), '-i', path, '-frames:v', '1',
+        '-vf', 'scale=64:36:in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgb24', '-f', 'rawvideo', 'pipe:1'],
+      { onStdout: (c) => chunks.push(c), timeoutMs: 30_000 },
+    );
+    parts.push(Buffer.concat(chunks));
+  }
+  return new Uint8Array(Buffer.concat(parts));
+}
+
+const lutCache = new Map<string, { mtime: number; lut: CubeLut }>();
+
+/** Reads and parses a .cube file (cached until the file changes). */
+export async function readLut(path: string): Promise<CubeLut> {
+  const st = await fs.stat(path);
+  const hit = lutCache.get(path);
+  if (hit && hit.mtime === st.mtimeMs) return hit.lut;
+  if (st.size > 64 * 1024 * 1024) throw new Error('This LUT file is too large.');
+  const lut = parseCube(await fs.readFile(path, 'utf8'));
+  lutCache.set(path, { mtime: st.mtimeMs, lut });
+  return lut;
 }

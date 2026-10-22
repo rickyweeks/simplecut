@@ -3,25 +3,27 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
 import {
   buildExportPlan,
+  buildFrameJob,
   buildLoudnessJob,
   denoiseStep,
   overallProgress,
   parseLoudnorm,
   type Clip,
+  type CubeLut,
   type MediaItem,
   type ProjectDoc,
   type VideoEncoderId,
 } from '@simplecut/core';
-import type { ExportProgressEvent, ExportResult, ExportStartRequest, LoudnessRequest } from '../shared/api';
+import type { ExportProgressEvent, ExportResult, ExportStartRequest, FrameRequest, LoudnessRequest } from '../shared/api';
 import { encoderDetector } from './encoders';
 import { CancelledError, FfmpegError, runFfmpeg } from './ffmpeg';
-import { denoisedAudio } from './media';
+import { denoisedAudio, readLut } from './media';
 
 /**
  * Makes sure every noise-reduced audio file the edit needs exists, and returns a function
  * that maps a clip to the audio file to read (the cleaned file, or the original).
  */
-async function audioSources(doc: ProjectDoc): Promise<(clip: Clip, media: MediaItem) => string> {
+export async function audioSources(doc: ProjectDoc): Promise<(clip: Clip, media: MediaItem) => string> {
   const paths = new Map<string, string>();
   for (const c of Object.values(doc.timeline.clips)) {
     const m = doc.media[c.mediaId];
@@ -30,6 +32,48 @@ async function audioSources(doc: ProjectDoc): Promise<(clip: Clip, media: MediaI
     if (!paths.has(key)) paths.set(key, await denoisedAudio(m.path, m, c.denoise));
   }
   return (clip, media) => (clip.denoise ? (paths.get(`${media.id}|${denoiseStep(clip.denoise)}`) ?? media.path) : media.path);
+}
+
+/** Imported LUTs the edit's color grades use, read and parsed by path. */
+async function inputLuts(doc: ProjectDoc): Promise<Record<string, CubeLut>> {
+  const out: Record<string, CubeLut> = {};
+  for (const c of Object.values(doc.timeline.clips)) {
+    const lut = c.color?.lut;
+    if (!lut || out[lut.path]) continue;
+    try {
+      out[lut.path] = await readLut(lut.path);
+    } catch (err) {
+      throw new Error(`The LUT "${lut.name}" could not be read (${err instanceof Error ? err.message : String(err)}). Relink or remove it in the Color section.`);
+    }
+  }
+  return out;
+}
+
+/** Writes the UI-rendered images (titles, rounded-corner masks, borders) to the temp folder. */
+async function writeImages(
+  tempDir: string,
+  textPngs: Record<string, Uint8Array> | undefined,
+  clipPngs: Record<string, { mask?: Uint8Array; ring?: Uint8Array }> | undefined,
+): Promise<{ textImages: Record<string, string>; clipImages: Record<string, { mask?: string; ring?: string }> }> {
+  const safe = (id: string) => id.replace(/[^\w-]/g, '_');
+  const textImages: Record<string, string> = {};
+  for (const [clipId, png] of Object.entries(textPngs ?? {})) {
+    const file = join(tempDir, `title-${safe(clipId)}.png`);
+    await fs.writeFile(file, png);
+    textImages[clipId] = file;
+  }
+  const clipImages: Record<string, { mask?: string; ring?: string }> = {};
+  for (const [clipId, imgs] of Object.entries(clipPngs ?? {})) {
+    const entry: { mask?: string; ring?: string } = {};
+    for (const key of ['mask', 'ring'] as const) {
+      const png = imgs[key];
+      if (!png) continue;
+      entry[key] = join(tempDir, `${key}-${safe(clipId)}.png`);
+      await fs.writeFile(entry[key]!, png);
+    }
+    clipImages[clipId] = entry;
+  }
+  return { textImages, clipImages };
 }
 
 let current: AbortController | null = null;
@@ -61,15 +105,12 @@ export async function startExport(req: ExportStartRequest, send: (e: ExportProgr
   }
 
   const tempDir = await fs.mkdtemp(join(tmpdir(), 'scut-export-'));
-  const textImages: Record<string, string> = {};
-  for (const [clipId, png] of Object.entries(req.textImages ?? {})) {
-    const file = join(tempDir, `title-${clipId.replace(/[^w-]/g, '_')}.png`);
-    await fs.writeFile(file, png);
-    textImages[clipId] = file;
-  }
-  const partial = join(dirname(req.outputPath), `.${basename(req.outputPath, extname(req.outputPath))}.simplecut-partial.mp4`);
+  const { textImages, clipImages } = await writeImages(tempDir, req.textImages, req.clipImages);
+  // FFmpeg picks the container from the extension, so the partial file keeps the real one.
+  const ext = extname(req.outputPath) || '.mp4';
+  const partial = join(dirname(req.outputPath), `.${basename(req.outputPath, ext)}.simplecut-partial${ext}`);
   const hw = await encoderDetector.detect();
-  const encoders: VideoEncoderId[] = req.encoder === 'software' || hw.length === 0 ? ['libx264'] : [hw[0]!, 'libx264'];
+  const encoders: VideoEncoderId[] = req.audioOnly || req.encoder === 'software' || hw.length === 0 ? ['libx264'] : [hw[0]!, 'libx264'];
   // GPU decoding pays off for heavy sources (4K, HEVC…). Each input opens its own decoder,
   // so it is only used for moderately sized edits; the software retry decodes on the CPU.
   const heavySources = [...usedMedia].some((id) => {
@@ -87,6 +128,7 @@ export async function startExport(req: ExportStartRequest, send: (e: ExportProgr
           send({ fraction: 0, label: 'Reducing background noise', etaSec: null, bytesWritten: 0, encoder });
         }
         const audioPathFor = await audioSources(req.doc);
+        const luts = await inputLuts(req.doc);
         const plan = buildExportPlan({
           doc: req.doc,
           range: req.range,
@@ -96,6 +138,10 @@ export async function startExport(req: ExportStartRequest, send: (e: ExportProgr
           hwDecode,
           audioPathFor,
           textImages,
+          clipImages,
+          inputLuts: luts,
+          output: req.output,
+          audioOnly: req.audioOnly,
           duckRegions: req.duckRegions,
         });
         for (const f of plan.files) await fs.writeFile(f.path, f.content, 'utf8');
@@ -114,6 +160,7 @@ export async function startExport(req: ExportStartRequest, send: (e: ExportProgr
           });
         }
         await fs.rename(partial, req.outputPath);
+        if (req.srt) await fs.writeFile(join(dirname(req.outputPath), `${basename(req.outputPath, ext)}.srt`), req.srt, 'utf8');
         const bytes = (await fs.stat(req.outputPath)).size;
         return { ok: true, outputPath: req.outputPath, encoder, elapsedSec: (Date.now() - started) / 1000, bytes };
       } catch (err) {
@@ -149,6 +196,30 @@ export async function measureLoudness(req: LoudnessRequest): Promise<{ integrate
       },
     });
     return parseLoudnorm(stderr);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
+/** Saves one program frame as a PNG, rendered by the export graph (so it is exactly the export's frame). */
+export async function grabFrame(req: FrameRequest): Promise<ExportResult> {
+  const started = Date.now();
+  const tempDir = await fs.mkdtemp(join(tmpdir(), 'scut-frame-'));
+  try {
+    const { textImages, clipImages } = await writeImages(tempDir, req.textImages, req.clipImages);
+    const out = join(tempDir, 'frame.png');
+    const { job, files } = buildFrameJob(
+      { doc: req.doc, outputPath: out, tempDir, textImages, clipImages, inputLuts: await inputLuts(req.doc) },
+      req.frame,
+    );
+    for (const f of files) await fs.writeFile(f.path, f.content, 'utf8');
+    await runFfmpeg(job.args, { onProgress: () => {} });
+    await fs.copyFile(out, req.outputPath);
+    const bytes = (await fs.stat(req.outputPath)).size;
+    return { ok: true, outputPath: req.outputPath, elapsedSec: (Date.now() - started) / 1000, bytes };
+  } catch (err) {
+    const message = err instanceof FfmpegError ? `FFmpeg could not render the frame.\n${err.message}` : err instanceof Error ? err.message : String(err);
+    return { ok: false, error: message };
   } finally {
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }

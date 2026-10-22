@@ -1,6 +1,17 @@
 import {
   DEFAULT_DUCK_DB,
   FORMATS,
+  bakeLut,
+  clipSpeed,
+  gradeKey,
+  isIdentityTransform,
+  isNeutralGrade,
+  mediaPictureSize,
+  pictureGeometry,
+  sourceFrameAt,
+  sourceSpan,
+  transformOf,
+  zoomScaleAt,
   audioTracks,
   audioTransitionGain,
   clipAt,
@@ -16,6 +27,7 @@ import {
   transitionFrameAt,
   videoTracks,
   type Clip,
+  type CubeLut,
   type DuckRegion,
   type Frame,
   type MediaItem,
@@ -23,14 +35,18 @@ import {
   type Timeline,
 } from '@simplecut/core';
 import { getPlayhead, setPlayhead, usePlayhead } from '../state/playhead';
+import { drawTransformed } from '../render/picture';
 import type { RenderedText } from '../text/renderText';
+import { ColorProcessor } from './color';
 
 /**
  * Program monitor playback: composites every visible video track onto a canvas and mixes
  * every audible audio track through Web Audio, in real time.
  *
  * The composite mirrors the export graph exactly: tracks are drawn bottom-up (V1 first,
- * higher tracks cover lower ones), each clip fitted (letterboxed) into the frame on black;
+ * higher tracks cover lower ones), each clip fitted (letterboxed) into the frame on black or
+ * placed by its transform (core pictureGeometry), color-graded with the same baked LUT, and
+ * timed by its speed (the source frame shown is the one FFmpeg's setpts + fps pick);
  * transitions, title animations and every audio gain (clip volume, fades, crossfades,
  * track volume, music ducking, master gain) come from the same core functions the export
  * uses, so what you hear and see is what you get.
@@ -59,6 +75,8 @@ export interface EngineHost {
   text(text: TextContent, width: number, height: number): RenderedText;
   /** Where dialogue is (the music track ducks under it). */
   duckRegions(): DuckRegion[];
+  /** An imported LUT: the table, undefined while loading, null if it can't be read. */
+  inputLut(path: string): CubeLut | null | undefined;
 }
 
 type SlotKind = 'video' | 'audio';
@@ -94,6 +112,7 @@ export class ProgramEngine {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly audio: AudioContext;
   private readonly master: GainNode;
+  private color = new ColorProcessor();
   private slots: Slot[] = [];
   private images = new Map<string, HTMLImageElement>();
   private assigned = new Map<string, Slot>();
@@ -230,7 +249,11 @@ export class ProgramEngine {
         if (s.from <= frame || s.from > horizon) continue;
         // A clip that simply continues an active one (a razor cut) inherits its element.
         const continues = active.some(
-          (a) => a.clip.mediaId === s.clip.mediaId && s.clip.start === clipEnd(a.clip) && s.clip.sourceIn === a.clip.sourceIn + a.clip.duration,
+          (a) =>
+            a.clip.mediaId === s.clip.mediaId &&
+            s.clip.start === clipEnd(a.clip) &&
+            clipSpeed(s.clip) === clipSpeed(a.clip) &&
+            Math.abs(s.clip.sourceIn - (a.clip.sourceIn + sourceSpan(a.clip, a.clip.duration))) < 1e-6,
         );
         if (!continues) needs.push({ clip: s.clip, kind, active: false, from: s.from });
       }
@@ -251,7 +274,8 @@ export class ProgramEngine {
       if (!media || media.kind === 'image' || this.host.offline(media.id)) return null;
       return n.kind === 'audio' ? this.host.audioUrl(n.clip, media) : this.host.url(media);
     };
-    const sourceSec = (clip: Clip, at: number) => Math.max(0, (clip.sourceIn + (at - clip.start)) / fps);
+    // Source time at a (fractional) timeline frame; +0.5 frame shows the frame the export's fps filter picks.
+    const sourceSec = (clip: Clip, at: number) => Math.max(0, sourceFrameAt(clip, at) / fps);
 
     // Keep existing assignments that still fit, then hand out the rest.
     const next = new Map<string, Slot>();
@@ -301,7 +325,7 @@ export class ProgramEngine {
       const el = s.el;
       if (!n.active) {
         // Pre-roll: park on the first frame the clip will be needed at.
-        const t = sourceSec(clip, n.from) + 0.5 / fps;
+        const t = sourceSec(clip, n.from + 0.5);
         if (!el.paused) el.pause();
         if (!el.seeking && Math.abs(el.currentTime - t) > 0.5 / fps) el.currentTime = t;
         if (s.gain) s.gain.gain.value = 0;
@@ -315,7 +339,11 @@ export class ProgramEngine {
       }
       if (forward) {
         const target = sourceSec(clip, exact);
-        if (el.playbackRate !== this.rate) el.playbackRate = this.rate;
+        const rate = this.rate * clipSpeed(clip);
+        if (el.playbackRate !== rate) {
+          el.preservesPitch = true;
+          el.playbackRate = rate;
+        }
         if (el.paused) {
           if (Math.abs(el.currentTime - target) > 0.08) el.currentTime = target;
           s.playStartedAt = now;
@@ -328,8 +356,8 @@ export class ProgramEngine {
       } else {
         // Paused, scrubbing or reverse play: show the exact frame (mid-frame avoids rounding to its neighbour).
         if (!el.paused) el.pause();
-        const t = sourceSec(clip, frame) + 0.5 / fps;
-        if (!el.seeking && Math.abs(el.currentTime - t) > 0.4 / fps) el.currentTime = t;
+        const t = sourceSec(clip, frame + 0.5);
+        if (!el.seeking && Math.abs(el.currentTime - t) > (0.4 * clipSpeed(clip)) / fps) el.currentTime = t;
       }
     }
   }
@@ -508,14 +536,36 @@ export class ProgramEngine {
         ctx.fillRect(0, 0, cw, ch);
         return;
       }
+      let src: CanvasImageSource | null = null;
+      let sw = 0;
+      let sh = 0;
       if (media.kind === 'image') {
         const url = this.host.url(media);
         const img = url ? this.image(url) : null;
-        if (img?.complete && img.naturalWidth) fit(img, img.naturalWidth, img.naturalHeight, alpha, dx);
-        return;
+        if (img?.complete && img.naturalWidth) [src, sw, sh] = [img, img.naturalWidth, img.naturalHeight];
+      } else {
+        const v = this.assigned.get(clip.id)?.el as HTMLVideoElement | undefined;
+        if (v && v.readyState >= 2 && v.videoWidth) [src, sw, sh] = [v, v.videoWidth, v.videoHeight];
       }
-      const v = this.assigned.get(clip.id)?.el as HTMLVideoElement | undefined;
-      if (v && v.readyState >= 2 && v.videoWidth) fit(v, v.videoWidth, v.videoHeight, alpha, dx);
+      if (!src) return;
+      const k = cw / W;
+      const identity = isIdentityTransform(clip.transform);
+      const { w: mw, h: mh } = mediaPictureSize(media);
+      const g = identity ? null : pictureGeometry(transformOf(clip), mw, mh, W, H, zoomScaleAt(transformOf(clip), frame - clip.start, clip.duration));
+      // Color: grade the picture at the size it is drawn, through the same LUT the export uses.
+      const grade = clip.color;
+      if (grade && !isNeutralGrade(grade) && this.color.available) {
+        const input = grade.lut ? this.host.inputLut(grade.lut.path) : null;
+        if (!grade.lut || input) {
+          const s = g ? Math.min(1, 4096 / Math.max(g.pw * k, g.ph * k)) : 1;
+          const tw = g ? g.pw * k * s : Math.min(cw / sw, ch / sh) * sw;
+          const th = g ? g.ph * k * s : Math.min(cw / sw, ch / sh) * sh;
+          const out = this.color.process(src as TexImageSource, tw, th, gradeKey(grade), () => bakeLut(grade, input));
+          if (out) [src, sw, sh] = [out, out.width, out.height];
+        }
+      }
+      if (g) drawTransformed(ctx, src, sw, sh, g, k, W, dx, alpha);
+      else fit(src, sw, sh, alpha, dx);
     };
     for (const layer of layers) {
       for (const d of layer.draws) drawClip(d);

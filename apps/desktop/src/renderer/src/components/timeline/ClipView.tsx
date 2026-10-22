@@ -1,6 +1,6 @@
 import { memo } from 'react';
-import { AudioWaveform, Group, Link2Off, Music, Type, Wand2 } from 'lucide-react';
-import { MAX_VOLUME_DB, MIN_VOLUME_DB, beatFramesInClip, effectiveFades, type Clip, type MediaItem } from '@simplecut/core';
+import { AudioWaveform, Group, Link2Off, Move, Music, Palette, Type, Undo2, Wand2 } from 'lucide-react';
+import { MAX_VOLUME_DB, MIN_VOLUME_DB, beatFramesInClip, clipSpeed, effectiveFades, isIdentityTransform, isNeutralGrade, type Clip, type MediaItem } from '@simplecut/core';
 import type { MediaAssets } from '../../state/assets';
 import { Thumbnails } from './Thumbnails';
 import { WaveformCanvas } from './Waveform';
@@ -39,7 +39,9 @@ export const ClipView = memo(function ClipView(props: {
   const fromPx = Math.max(0, props.viewFrom * px - x);
   const toPx = Math.min(w, props.viewTo * px - x);
   const bodyH = props.rowHeight - 6 - HEAD_H;
-  const pxPerSec = px * fps;
+  // Pixels per second of the source this clip plays (faster clips pack more source into each pixel).
+  const speed = clipSpeed(clip);
+  const pxPerSec = (px * fps) / speed;
   const sourceSec = clip.sourceIn / fps;
   const isText = !!clip.text;
   // Show the "unlinked" badge only where it is informative: media that has both streams.
@@ -67,6 +69,10 @@ export const ClipView = memo(function ClipView(props: {
         {clip.groupId && <Group size={11} />}
         {showUnlinked && <Link2Off size={11} />}
         {clip.denoise ? <Wand2 size={11} aria-label="Noise reduction" /> : null}
+        {media?.derived ? <Undo2 size={11} aria-label="Reversed" /> : null}
+        {clip.color && !isNeutralGrade(clip.color) ? <Palette size={11} aria-label="Color" /> : null}
+        {!isIdentityTransform(clip.transform) ? <Move size={11} aria-label="Position and size" /> : null}
+        {speed !== 1 ? <span className="clip-speed">{Math.round(speed * 100)}%</span> : null}
         <span>{isText ? clip.text!.content.split('\n')[0] || 'Title' : (media?.name ?? 'Missing media')}</span>
         {clip.kind === 'audio' && clip.volumeDb ? <span className="clip-db">{clip.volumeDb > 0 ? '+' : ''}{clip.volumeDb} dB</span> : null}
       </div>

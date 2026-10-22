@@ -48,6 +48,8 @@ const playhead = () => page.$eval('.playhead-line', (e) => Number(e.dataset.fram
 
 try {
   await page.waitForSelector('[data-testid="timeline"]');
+  // First launch shows the tutorial; these tests drive the editor directly.
+  await page.click('[data-testid="tutorial-skip"]', { timeout: 5000 }).catch(() => {});
 
   step('Two talking-head clips with a cut, then Ctrl+D');
   await app.evaluate(({ dialog }, f) => {

@@ -63,7 +63,7 @@ export function updateTrack(tl: Timeline, trackId: Id, patch: TrackFlags): Timel
 }
 
 /** Clip properties that can be changed in place (Inspector, handles on the clip). */
-export type ClipProps = Partial<Pick<Clip, 'volumeDb' | 'fadeIn' | 'fadeOut' | 'denoise' | 'text'>>;
+export type ClipProps = Partial<Pick<Clip, 'volumeDb' | 'fadeIn' | 'fadeOut' | 'denoise' | 'text' | 'color'>>;
 
 /** Changes properties of clips (skipping locked tracks). Undefined values remove the property. */
 export function updateClips(tl: Timeline, clipIds: Id[], patch: ClipProps): Timeline {

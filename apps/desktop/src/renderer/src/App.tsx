@@ -5,6 +5,7 @@ import { handleCloseRequest, importPaths, openProjectPath, startAutosave, startT
 import { TooltipLayer, Toasts } from './components/common';
 import { ExportDialog, RecoveryDialog, RelinkDialog, SettingsDialog, ShortcutSheet } from './components/Dialogs';
 import { Inspector } from './components/Inspector';
+import { CaptionsDialog, PasteAttributesDialog, Tutorial } from './components/MoreDialogs';
 import { MediaBin } from './components/MediaBin';
 import { ProgramMonitor } from './components/ProgramMonitor';
 import { SourceMonitor } from './components/SourceMonitor';
@@ -47,6 +48,8 @@ function startApp(): void {
     }
     const file = await api.app.launchFile();
     if (file) await openProjectPath(file, { skipConfirm: true });
+    // First launch: a short guided tour (import, mark, insert, cut, export).
+    else if (!useUi.getState().prefs.tutorialDone) useUi.getState().set({ tutorialStep: 0 });
   })();
 }
 
@@ -99,6 +102,9 @@ export function App() {
       {dialog === 'relink' && <RelinkDialog />}
       {dialog === 'recovery' && <RecoveryDialog />}
       {dialog === 'settings' && <SettingsDialog />}
+      {dialog === 'pasteAttributes' && <PasteAttributesDialog />}
+      {dialog === 'captions' && <CaptionsDialog />}
+      <Tutorial />
       {shortcuts && <ShortcutSheet />}
       <Toasts />
       <TooltipLayer />

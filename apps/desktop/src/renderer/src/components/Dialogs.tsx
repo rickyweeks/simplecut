@@ -6,17 +6,23 @@ import {
   YOUTUBE_AUDIO_BITRATE,
   basename,
   blackGaps,
+  captionsToSrt,
+  captionsTrack,
+  clipsOnTrack,
+  exportPresets,
   formatTimecode,
+  presetOutput,
+  type ExportPresetId,
   markedRange,
   timelineDuration,
   youtubeBitrate,
   type Range,
 } from '@simplecut/core';
 import type { EncoderInfo, ExportProgressEvent, ExportResult, RecoveryEntry } from '../../../shared/api';
+import { exportImages } from '../actions/deliver';
 import { flushLiveEdit } from '../actions/edit';
 import { recoverProject, relinkMedia } from '../actions/project';
 import { duckRegionsFor } from '../state/ducking';
-import { textPng } from '../text/renderText';
 import { api } from '../lib/api';
 import { SHORTCUT_GROUPS } from '../shortcuts';
 import { useAssets } from '../state/assets';
@@ -42,6 +48,8 @@ export function ExportDialog() {
   const [phase, setPhase] = useState<'setup' | 'running' | 'done' | 'error'>('setup');
   const [progress, setProgress] = useState<ExportProgressEvent | null>(null);
   const [result, setResult] = useState<ExportResult | null>(null);
+  const [presetId, setPresetId] = useState<ExportPresetId>('timeline');
+  const [withSrt, setWithSrt] = useState(true);
 
   useEffect(() => {
     void api.exporter.encoders().then(setEncoders);
@@ -49,20 +57,34 @@ export function ExportDialog() {
   }, []);
 
   const fps = tl.settings.fps;
-  const { width, height } = FORMATS[tl.settings.format];
+  const presets = exportPresets(tl.settings.format);
+  const preset = presets.find((x) => x.id === presetId && !x.unavailable) ?? presets[0]!;
+  const audioOnly = preset.kind === 'audio' ? (preset.extension as 'mp3' | 'wav') : undefined;
+  const { width, height } = preset.size ?? FORMATS[tl.settings.format];
   const range: Range = rangeMode === 'inout' && marked ? marked : { start: 0, end: timelineDuration(tl) };
   const seconds = (range.end - range.start) / fps;
   const bitrate = youtubeBitrate(width, height, fps);
-  const estimate = ((bitrate.target + YOUTUBE_AUDIO_BITRATE) * seconds) / 8;
+  const estimate = ((audioOnly === 'wav' ? 48000 * 2 * 16 : audioOnly === 'mp3' ? 320000 : bitrate.target + YOUTUBE_AUDIO_BITRATE) * seconds) / 8;
+  const capTrack = captionsTrack(tl);
+  const hasCaptions = !!capTrack && clipsOnTrack(tl, capTrack.id).length > 0;
   const gapsInRange = blackGaps(tl).filter((g) => g.start < range.end && g.end > range.start);
   const offlineUsed = new Set(Object.values(tl.clips).filter((c) => offline[c.mediaId]).map((c) => c.mediaId)).size;
   const encoderName =
     encoderPref === 'software' || !encoders ? ENCODER_LABELS.libx264 : `${ENCODER_LABELS[encoders.preferred]}${encoders.preferred === 'libx264' ? '' : ' (hardware)'}`;
 
   const choose = async () => {
-    const p = await api.dialogs.exportVideo(name);
+    const p =
+      preset.extension === 'mp4'
+        ? await api.dialogs.exportVideo(name)
+        : await api.dialogs.saveFile({ title: 'Export audio', defaultName: `${name}.${preset.extension}`, filters: [{ name: preset.extension.toUpperCase(), extensions: [preset.extension] }] });
     if (p) setOutput(p);
     return p;
+  };
+  // Switching between video and audio presets keeps the chosen folder and name, with the right extension.
+  const pick = (id: ExportPresetId) => {
+    setPresetId(id);
+    const next = presets.find((x) => x.id === id)!;
+    if (output) setOutput(output.replace(/\.[^.\\/]+$/, '') + '.' + next.extension);
   };
 
   const start = async () => {
@@ -72,13 +94,20 @@ export function ExportDialog() {
     setPhase('running');
     setProgress(null);
     const doc = getDoc();
-    // Titles are drawn by the same renderer the preview uses, so they export pixel-identical.
-    const { width: W, height: H } = FORMATS[doc.timeline.settings.format];
-    const textImages: Record<string, Uint8Array> = {};
-    for (const c of Object.values(doc.timeline.clips)) {
-      if (c.text && c.start < range.end && c.start + c.duration > range.start) textImages[c.id] = await textPng(c.text, W, H);
-    }
-    const r = await api.exporter.start({ doc, range, outputPath: out, encoder: encoderPref, textImages, duckRegions: duckRegionsFor(doc.timeline) });
+    // Titles, rounded corners and borders are drawn by the same code the preview uses.
+    const { textImages, clipImages } = audioOnly ? { textImages: {}, clipImages: {} } : await exportImages(doc, range, { width, height });
+    const r = await api.exporter.start({
+      doc,
+      range,
+      outputPath: out,
+      encoder: encoderPref,
+      textImages,
+      clipImages,
+      output: presetOutput(preset, doc.timeline.settings.format),
+      audioOnly,
+      srt: hasCaptions && withSrt && !audioOnly ? captionsToSrt(doc.timeline, range) : undefined,
+      duckRegions: duckRegionsFor(doc.timeline),
+    });
     setResult(r);
     setPhase(r.ok ? 'done' : r.cancelled ? 'setup' : 'error');
     if (r.cancelled) useUi.getState().toast('Export cancelled.');
@@ -105,15 +134,39 @@ export function ExportDialog() {
         </>
       ) : (
         <>
+          <div className="preset-row" data-testid="export-presets">
+            {presets.map((x) => (
+              <button
+                key={x.id}
+                type="button"
+                className={`preset${preset.id === x.id ? ' on' : ''}`}
+                onClick={() => pick(x.id)}
+                disabled={running || !!x.unavailable}
+                data-tip={x.unavailable ?? undefined}
+                data-testid={`preset-${x.id}`}
+              >
+                {x.name}
+              </button>
+            ))}
+          </div>
           <div className="kv">
-            <span>Video</span>
-            <span>
-              H.264 MP4 · {width}×{height} · {fps} fps · {bitrate.target / 1e6} Mbps
-            </span>
-            <span>Audio</span>
-            <span>AAC · 48 kHz stereo · {YOUTUBE_AUDIO_BITRATE / 1000} kbps</span>
-            <span>Encoder</span>
-            <span>{encoderName}</span>
+            {audioOnly ? (
+              <>
+                <span>Audio</span>
+                <span>{audioOnly === 'mp3' ? 'MP3 · 48 kHz stereo · 320 kbps' : 'WAV · 48 kHz stereo · 16-bit'}</span>
+              </>
+            ) : (
+              <>
+                <span>Video</span>
+                <span>
+                  H.264 MP4 · {width}×{height} · {fps} fps · {bitrate.target / 1e6} Mbps
+                </span>
+                <span>Audio</span>
+                <span>AAC · 48 kHz stereo · {YOUTUBE_AUDIO_BITRATE / 1000} kbps</span>
+                <span>Encoder</span>
+                <span>{encoderName}</span>
+              </>
+            )}
             <span>Length</span>
             <span>{formatTimecode(range.end - range.start, fps)}</span>
             <span>Estimated size</span>
@@ -134,13 +187,19 @@ export function ExportDialog() {
               </button>
             </div>
           </div>
+          {hasCaptions && !audioOnly && (
+            <label className="check-row">
+              <input type="checkbox" checked={withSrt} onChange={(e) => setWithSrt(e.target.checked)} disabled={running} data-testid="export-srt" />
+              Also save the captions as an .srt file (to upload to YouTube as subtitles)
+            </label>
+          )}
           <div className="path-box" style={{ marginTop: 8 }}>
-            <span>{output ?? 'Choose where to save the MP4…'}</span>
+            <span>{output ?? `Choose where to save the ${preset.extension.toUpperCase()}…`}</span>
             <button type="button" className="btn" onClick={() => void choose()} disabled={running}>
               {output ? 'Change…' : 'Choose…'}
             </button>
           </div>
-          {gapsInRange.length > 0 && !running && (
+          {gapsInRange.length > 0 && !running && !audioOnly && (
             <div className="callout warn">
               <AlertTriangle size={16} />
               <div>
@@ -368,6 +427,14 @@ export function SettingsDialog() {
               {s === 1 ? 'Full' : s === 0.5 ? 'Half' : 'Quarter'}
             </button>
           ))}
+        </div>
+      </div>
+      <div className="field" style={{ padding: '6px 0', gridTemplateColumns: '150px 1fr' }}>
+        <label>Getting started</label>
+        <div>
+          <button type="button" className="btn" onClick={() => useUi.getState().set({ dialog: null, tutorialStep: 0 })} data-testid="show-tutorial">
+            Show the tutorial again
+          </button>
         </div>
       </div>
       <p style={{ fontSize: 11.5, color: 'var(--text-3)' }}>

@@ -1,6 +1,8 @@
 import { applyDefaultTransition } from './actions/audio';
 import * as edit from './actions/edit';
+import { exportFrameCmd } from './actions/deliver';
 import { goToBeat } from './actions/music';
+import { openPasteAttributes } from './actions/visual';
 import * as project from './actions/project';
 import { programEngine } from './playback/engine';
 import { sourcePlayer } from './playback/source';
@@ -42,6 +44,8 @@ export const SHORTCUT_GROUPS: { title: string; items: [string, string[]][] }[] =
       ['Delete, leaving a gap', ['Shift+Delete']],
       ['Cross dissolve (default video transition)', ['Ctrl+D']],
       ['Audio crossfade', ['Shift+Ctrl+D']],
+      ['Speed of the selected clip', ['Ctrl+R']],
+      ['Paste attributes (color, audio, size, text style)', ['Ctrl+Alt+V']],
     ],
   },
   {
@@ -74,6 +78,7 @@ export const SHORTCUT_GROUPS: { title: string; items: [string, string[]][] }[] =
       ['Undo / redo', ['Ctrl+Z', 'Shift+Ctrl+Z']],
       ['Import media', ['Ctrl+I']],
       ['Export for YouTube', ['Ctrl+M']],
+      ['Save the current frame as a PNG (thumbnail)', ['Ctrl+Shift+E']],
       ['Save / save as', ['Ctrl+S', 'Shift+Ctrl+S']],
       ['Open / new project', ['Ctrl+O', 'Ctrl+N']],
       ['Show shortcuts', ['Hold ?']],
@@ -150,7 +155,7 @@ export function handleKeyDown(e: KeyboardEvent): void {
         edit.copySelection();
         break;
       case 'v':
-        if (alt) ui.toast('Paste attributes arrives with clip effects in Phase 3.');
+        if (alt) openPasteAttributes();
         else edit.pasteAtPlayhead();
         break;
       case 'a':
@@ -174,6 +179,22 @@ export function handleKeyDown(e: KeyboardEvent): void {
         break;
       case 'i':
         void project.importDialog();
+        break;
+      case 'e':
+        if (shift) void exportFrameCmd();
+        else handled = false;
+        break;
+      case 'r':
+        // Premiere's Speed/Duration: jump to the speed controls of the selected clip.
+        if (!ui.selection.clipIds.length) ui.toast('Select a clip to change its speed.');
+        else {
+          ui.set({ inspectorOpen: true, inspectorTab: 'properties' });
+          setTimeout(() => {
+            const el = document.querySelector<HTMLInputElement>('[data-testid="speed-custom"]');
+            el?.scrollIntoView({ block: 'center' });
+            el?.focus();
+          }, 50);
+        }
         break;
       default:
         handled = false;

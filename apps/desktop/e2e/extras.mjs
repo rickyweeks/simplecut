@@ -58,6 +58,8 @@ const press = async (key, n = 1) => {
 
 try {
   await page.waitForSelector('[data-testid="timeline"]');
+  // First launch shows the tutorial; these tests drive the editor directly.
+  await page.click('[data-testid="tutorial-skip"]', { timeout: 5000 }).catch(() => {});
 
   step('VFR footage gets a constant-frame-rate proxy automatically');
   await app.evaluate(({ dialog }, f) => {

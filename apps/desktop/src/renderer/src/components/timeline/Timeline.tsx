@@ -63,6 +63,7 @@ import {
 } from '@simplecut/core';
 import { applyDefaultTransition, dropTransition } from '../../actions/audio';
 import * as edit from '../../actions/edit';
+import { applySilences, cancelSilences, toggleSilence } from '../../actions/silences';
 import { addMusicCmd, beatFrames } from '../../actions/music';
 import { addPresetTitle } from '../../actions/titles';
 import { importPaths } from '../../actions/project';
@@ -469,7 +470,7 @@ export function Timeline() {
     // Like Premiere: open the clip in the source monitor with its range marked.
     const fpsNow = getTimeline().settings.fps;
     useSource.getState().load(clip.mediaId);
-    useSource.getState().set({ inSec: clip.sourceIn / fpsNow, outSec: (clip.sourceIn + clip.duration) / fpsNow, timeSec: clip.sourceIn / fpsNow });
+    useSource.getState().set({ inSec: clip.sourceIn / fpsNow, outSec: (clip.sourceIn + clip.duration * (clip.speed ?? 1)) / fpsNow, timeSec: clip.sourceIn / fpsNow });
     useUi.getState().set({ focus: 'source' });
   };
 
@@ -559,10 +560,12 @@ export function Timeline() {
   const bottomVideo = rows.video[rows.video.length - 1]?.track.id;
   const { inPoint, outPoint } = tl;
   const hasClips = Object.keys(tl.clips).length > 0;
+  const silences = useUi((s) => s.silences);
 
   return (
     <section className={`panel timeline${focused ? ' focused' : ''}`} onPointerDown={() => useUi.getState().set({ focus: 'timeline' })} data-testid="timeline">
       <TimelineToolbar tool={tool} snapping={snapping} px={px} onZoom={(p) => zoomTo(p)} tl={committed} />
+      {silences && <SilenceBar fps={fps} />}
       <div className="panel-body">
         <div className="tl-scroll" ref={scrollRef}>
           <div
@@ -642,6 +645,21 @@ export function Timeline() {
                   width: ((outPoint != null ? outPoint + 1 : Math.max(duration, (inPoint ?? 0) + 1)) - (inPoint ?? 0)) * px,
                 }}
               />
+            )}
+            {silences?.ranges.map((r, i) =>
+              r.end < viewFrom || r.start > viewTo ? null : (
+                <div
+                  key={`s${r.start}`}
+                  className={`silence-region${silences.remove[i] ? '' : ' keep'}`}
+                  style={{ top: RULER_H, height: rows.bottom - RULER_H, left: HEADER_W + r.start * px, width: Math.max(2, (r.end - r.start) * px) }}
+                  onPointerDown={(e) => {
+                    e.stopPropagation();
+                    toggleSilence(i);
+                  }}
+                  data-testid="silence-region"
+                  data-tip={silences.remove[i] ? `Pause, ${((r.end - r.start) / fps).toFixed(2)} s: will be removed. Click to keep it.` : 'Kept. Click to remove it after all.'}
+                />
+              ),
             )}
             <PlayheadLine px={px} offset={HEADER_W} />
             {snapAt != null && <div className="snap-line" style={{ left: HEADER_W + snapAt * px }} />}
@@ -748,6 +766,28 @@ const TrackRow = memo(function TrackRow(props: {
     </div>
   );
 });
+
+/** Review bar for Remove Silences: how much will go, and Remove / Cancel. */
+function SilenceBar({ fps }: { fps: number }) {
+  const s = useUi((st) => st.silences)!;
+  const removing = s.ranges.filter((_, i) => s.remove[i]);
+  const total = removing.reduce((n, r) => n + r.end - r.start, 0) / fps;
+  return (
+    <div className="review-bar" data-testid="silence-bar">
+      <span>
+        <b>{removing.length}</b> of {s.ranges.length} pauses selected · <b>{total.toFixed(1)} s</b> will be removed
+      </span>
+      <span className="dim">Click a red pause to keep it.</span>
+      <div className="grow" />
+      <button type="button" className="btn ghost" onClick={cancelSilences}>
+        Cancel
+      </button>
+      <button type="button" className="btn primary" onClick={applySilences} disabled={!removing.length} data-testid="remove-silences">
+        Remove {removing.length} pause{removing.length === 1 ? '' : 's'}
+      </button>
+    </div>
+  );
+}
 
 function TimelineToolbar({ tool, snapping, px, onZoom, tl }: { tool: string; snapping: boolean; px: number; onZoom: (px: number) => void; tl: TimelineModel }) {
   const frame = usePlayhead((s) => s.frame);

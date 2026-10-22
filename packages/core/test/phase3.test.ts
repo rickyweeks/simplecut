@@ -154,6 +154,11 @@ describe('transforms', () => {
     expect(v.clips.a!.transform?.fit).toBe('fill');
     expect(v.clips.aa!.transform).toBeUndefined();
     expect(reframeForFormat(v, media, '1080p').clips.a!.transform).toBeUndefined();
+    // A picture-in-picture keeps its own layout; a reframed clip keeps its sideways position.
+    const pip = updateTransforms(talk(), ['b'], pipTransform('topLeft', media.m2, '1080p'));
+    expect(reframeForFormat(pip, media, 'vertical').clips.b!.transform?.fit).toBe('fit');
+    const shifted = updateTransforms(v, ['a'], { x: 0.3 });
+    expect(reframeForFormat(shifted, media, 'vertical')).toBe(shifted);
   });
 
   it('exports transformed clips: crop, scale, mask, border, rotate, opacity, placement, zoom', () => {

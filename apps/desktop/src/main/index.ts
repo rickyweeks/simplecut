@@ -1,12 +1,13 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BrowserWindow, Menu, app, dialog, ipcMain, nativeTheme, shell } from 'electron';
-import { IMPORT_EXTENSIONS, PROJECT_EXTENSION, type MediaInfo } from '@simplecut/core';
-import { IPC, type ConfirmOptions, type ExportStartRequest, type LoudnessRequest } from '../shared/api';
+import { IMPORT_EXTENSIONS, PROJECT_EXTENSION, type MediaInfo, type MediaItem } from '@simplecut/core';
+import { IPC, type ConfirmOptions, type ExportStartRequest, type FrameRequest, type LoudnessRequest, type SilenceRequest, type TranscribeRequest } from '../shared/api';
+import { cancelCaptions, downloadModel, modelStatus, transcribe } from './captions';
 import { encoderDetector, encoderInfo } from './encoders';
-import { cancelExport, measureLoudness, startExport } from './exporter';
+import { cancelExport, grabFrame, measureLoudness, startExport } from './exporter';
 import { binariesPresent, killAll } from './ffmpeg';
-import { analyzeBeatsFor, denoisedAudio, prepareMedia, prober } from './media';
+import { analyzeBeatsFor, colorSamples, denoisedAudio, detectSilences, prepareMedia, prober, readLut, reverseMedia } from './media';
 import { registerMediaProtocol, registerSchemePrivileges } from './protocol';
 import { findInFolder, projectStorage, recovery } from './storage';
 
@@ -119,6 +120,15 @@ function registerIpc(): void {
     const r = await dialog.showOpenDialog(parent()!, { title: `Locate "${fileName}"`, properties: ['openFile'], filters: [mediaFilter, { name: 'All files', extensions: ['*'] }] });
     return r.canceled ? null : (r.filePaths[0] ?? null);
   });
+  ipcMain.handle(IPC.dialogOpenLut, async () => {
+    const r = await dialog.showOpenDialog(parent()!, { title: 'Import a LUT', properties: ['openFile'], filters: [{ name: 'Cube LUT', extensions: ['cube'] }] });
+    return r.canceled ? null : (r.filePaths[0] ?? null);
+  });
+  ipcMain.handle(IPC.dialogSaveFile, async (_e, o: { title: string; defaultName: string; filters: { name: string; extensions: string[] }[] }) => {
+    const folder = /\.(png|jpe?g)$/i.test(o.defaultName) ? app.getPath('pictures') : /\.(mp3|wav)$/i.test(o.defaultName) ? app.getPath('music') : app.getPath('videos');
+    const r = await dialog.showSaveDialog(parent()!, { title: o.title, defaultPath: join(folder, o.defaultName), filters: o.filters });
+    return r.canceled ? null : (r.filePath ?? null);
+  });
   ipcMain.handle(IPC.dialogConfirm, async (_e, o: ConfirmOptions) => {
     const r = await dialog.showMessageBox(parent()!, { type: 'question', message: o.message, detail: o.detail, buttons: o.buttons, defaultId: o.defaultId, cancelId: o.cancelId, noLink: true });
     return r.response;
@@ -139,6 +149,15 @@ function registerIpc(): void {
   ipcMain.handle(IPC.mediaBeats, (_e, path: string) => analyzeBeatsFor(path));
   ipcMain.handle(IPC.mediaDenoise, (_e, path: string, info: MediaInfo, strength: number) => denoisedAudio(path, info, strength));
   ipcMain.handle(IPC.exportLoudness, (_e, req: LoudnessRequest) => measureLoudness(req));
+  ipcMain.handle(IPC.mediaReverse, (_e, media: MediaItem, inSec: number, outSec: number) => reverseMedia(media, inSec, outSec));
+  ipcMain.handle(IPC.mediaSilences, (_e, req: SilenceRequest) => detectSilences(req.path, req.startSec, req.durationSec, req.settings));
+  ipcMain.handle(IPC.mediaColorSamples, (_e, path: string, times: number[]) => colorSamples(path, times));
+  ipcMain.handle(IPC.mediaReadLut, (_e, path: string) => readLut(path));
+  ipcMain.handle(IPC.captionsStatus, () => modelStatus());
+  ipcMain.handle(IPC.captionsDownload, (e) => downloadModel((p) => e.sender.send(IPC.captionsProgress, p)));
+  ipcMain.handle(IPC.captionsTranscribe, (e, req: TranscribeRequest) => transcribe(req, (p) => e.sender.send(IPC.captionsProgress, p)));
+  ipcMain.handle(IPC.captionsCancel, () => cancelCaptions());
+  ipcMain.handle(IPC.exportFrame, (_e, req: FrameRequest) => grabFrame(req));
 
   ipcMain.handle(IPC.exportEncoders, () => encoderInfo());
   ipcMain.handle(IPC.exportStart, (e, req: ExportStartRequest) => startExport(req, (p) => e.sender.send(IPC.exportProgress, p)));

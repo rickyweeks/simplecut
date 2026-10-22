@@ -183,13 +183,16 @@ export function punchInTransform(amount: number, smooth: boolean): Partial<Trans
 }
 
 /**
- * Shorts mode: a 9:16 timeline fills the frame with each clip (center crop), and you move
- * the picture sideways to reframe. Going back to 16:9 letterboxes again.
+ * Shorts mode: a 9:16 timeline fills the frame with each full-frame clip (center crop), and
+ * you move the picture sideways to reframe (x is kept for that). Going back to 16:9
+ * letterboxes again.
  */
 export function reframeForFormat(tl: Timeline, media: Record<Id, MediaItem | undefined>, format: FormatPreset): Timeline {
   const fill = format === 'vertical';
+  // Only full-frame clips are reframed; a picture-in-picture or other placed clip keeps its layout.
+  const fullFrame = (c: Clip) => isIdentityTransform({ ...transformOf(c), fit: 'fit', x: 0.5 });
   const ids = Object.values(tl.clips)
-    .filter((c) => c.kind === 'video' && !c.text && media[c.mediaId] && transformOf(c).fit !== (fill ? 'fill' : 'fit'))
+    .filter((c) => c.kind === 'video' && !c.text && media[c.mediaId] && transformOf(c).fit !== (fill ? 'fill' : 'fit') && fullFrame(c))
     .map((c) => c.id);
-  return updateTransforms(tl, ids, (t) => (fill ? { fit: 'fill' } : { fit: 'fit', x: 0.5, y: 0.5 }));
+  return updateTransforms(tl, ids, () => (fill ? { fit: 'fill' } : { fit: 'fit', x: 0.5, y: 0.5 }));
 }

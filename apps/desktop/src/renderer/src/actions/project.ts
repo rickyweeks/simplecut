@@ -32,7 +32,7 @@ const errText = (e: unknown) => (e instanceof Error ? e.message.replace(/^Error 
 export async function importPaths(paths: string[]): Promise<MediaItem[]> {
   const supported = paths.filter(isImportable);
   const skipped = paths.length - supported.length;
-  if (skipped) toast(`Skipped ${skipped} file${skipped === 1 ? '' : 's'} SimpleCut can't import (use MP4, MOV, MKV, WebM, MP3, WAV, AAC, PNG or JPG).`, 'error');
+  if (skipped) toast(`Skipped ${skipped} file${skipped === 1 ? '' : 's'} SimpleCut can't import (use MP4, MOV, MKV, WebM, MP3, WAV, AAC, M4A, FLAC, OGG, PNG or JPG).`, 'error');
   if (!supported.length) return [];
 
   const existing = new Map(Object.values(getDoc().media).map((m) => [m.path.toLowerCase(), m]));

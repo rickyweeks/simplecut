@@ -1,9 +1,19 @@
 import { create } from 'zustand';
-import type { Clip, Frame, Id, Range, Timeline } from '@simplecut/core';
+import type { Clip, Frame, Id, Range, SilenceSettings, Timeline } from '@simplecut/core';
 
 export type Tool = 'select' | 'razor' | 'text';
 export type PanelId = 'bin' | 'source' | 'program' | 'timeline';
-export type DialogId = 'export' | 'settings' | 'relink' | 'recovery' | null;
+export type DialogId = 'export' | 'settings' | 'relink' | 'recovery' | 'pasteAttributes' | 'captions' | null;
+
+/** Pauses found by Remove Silences, shown on the timeline for review before cutting. */
+export interface SilenceReview {
+  clipIds: Id[];
+  trackIds: Id[];
+  ranges: Range[];
+  /** Per range: true = will be removed (click a range to keep it). */
+  remove: boolean[];
+  settings: SilenceSettings;
+}
 
 export interface Selection {
   clipIds: Id[];
@@ -22,6 +32,8 @@ export interface Prefs {
   playbackScale: 1 | 0.5 | 0.25;
   /** Seen the beginner tips. */
   tipsSeen: boolean;
+  /** Finished (or skipped) the first-launch tutorial. */
+  tutorialDone: boolean;
 }
 
 export interface Toast {
@@ -48,6 +60,9 @@ interface UiState {
   toasts: Toast[];
   clipboard: Clip[];
   prefs: Prefs;
+  silences: SilenceReview | null;
+  /** Step of the first-launch tutorial, or null when it is not showing. */
+  tutorialStep: number | null;
 
   set(patch: Partial<UiState>): void;
   select(patch: Partial<Selection>): void;
@@ -57,7 +72,7 @@ interface UiState {
 }
 
 const PREFS_KEY = 'simplecut.prefs';
-const defaultPrefs: Prefs = { rippleDelete: true, encoder: 'auto', playbackScale: 1, tipsSeen: false };
+const defaultPrefs: Prefs = { rippleDelete: true, encoder: 'auto', playbackScale: 1, tipsSeen: false, tutorialDone: false };
 
 function loadPrefs(): Prefs {
   try {
@@ -85,6 +100,8 @@ export const useUi = create<UiState>((set, get) => ({
   toasts: [],
   clipboard: [],
   prefs: loadPrefs(),
+  silences: null,
+  tutorialStep: null,
 
   set: (patch) => set(patch),
   select: (patch) => set({ selection: { ...emptySelection, ...patch } }),

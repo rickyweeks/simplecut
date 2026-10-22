@@ -37,3 +37,4 @@ export * from './export/encoders';
 export * from './export/buildExport';
 export * from './export/progress';
 export * from './export/chapters';
+export * from './export/presets';

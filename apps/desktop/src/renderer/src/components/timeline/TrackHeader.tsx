@@ -29,6 +29,11 @@ export const TrackHeader = memo(function TrackHeader({ track, label, targeted }:
       >
         {label}
       </button>
+      {track.captions && (
+        <span className="track-badge" data-tip="Captions track: auto captions go here, and export as .srt">
+          CC
+        </span>
+      )}
       <div className="grow" />
       {track.kind === 'video' ? (
         <button

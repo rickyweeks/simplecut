@@ -33,7 +33,7 @@ import { useAssets } from '../state/assets';
 // Small controls
 // ---------------------------------------------------------------------------
 
-function Row({ label, children, tip }: { label: string; children: ReactNode; tip?: string }) {
+export function Row({ label, children, tip }: { label: string; children: ReactNode; tip?: string }) {
   return (
     <div className="field" data-tip={tip}>
       <label>{label}</label>
@@ -43,7 +43,7 @@ function Row({ label, children, tip }: { label: string; children: ReactNode; tip
 }
 
 /** Range slider that previews while dragging (via onChange) and shows its value. */
-function Slider(props: { value: number; min: number; max: number; step: number; format: (v: number) => string; onChange: (v: number) => void; testId?: string }) {
+export function Slider(props: { value: number; min: number; max: number; step: number; format: (v: number) => string; onChange: (v: number) => void; testId?: string }) {
   return (
     <div className="slider-row">
       <input
@@ -60,7 +60,7 @@ function Slider(props: { value: number; min: number; max: number; step: number; 
   );
 }
 
-function Seg<T extends string>({ value, options, onChange }: { value: T; options: [T, ReactNode, string?][]; onChange: (v: T) => void }) {
+export function Seg<T extends string>({ value, options, onChange }: { value: T; options: [T, ReactNode, string?][]; onChange: (v: T) => void }) {
   return (
     <div className="seg">
       {options.map(([v, label, tip]) => (

@@ -2,7 +2,7 @@
  * The contract between the Electron main process and the UI (exposed as `window.scut`).
  * Types only, shared by main, preload and renderer.
  */
-import type { BeatAnalysis, DuckRegion, MediaAssetEvent, MediaInfo, ProjectDoc, Range, VideoEncoderId } from '@simplecut/core';
+import type { BeatAnalysis, CaptionWord, CubeLut, DuckRegion, MediaAssetEvent, MediaInfo, MediaItem, ProjectDoc, Range, SilenceSettings, VideoEncoderId } from '@simplecut/core';
 
 export interface ThumbnailMeta {
   intervalSec: number;
@@ -32,6 +32,48 @@ export interface ExportStartRequest {
   textImages?: Record<string, Uint8Array>;
   /** Where dialogue is; the music track ducks under it. */
   duckRegions?: DuckRegion[];
+  /** Export preset size, when it differs from the timeline format. */
+  output?: { width: number; height: number };
+  /** Sound only (MP3 or WAV). */
+  audioOnly?: 'mp3' | 'wav';
+  /** Rounded-corner masks and borders (PNG bytes) per clip, drawn by the UI at the picture size. */
+  clipImages?: Record<string, { mask?: Uint8Array; ring?: Uint8Array }>;
+  /** Captions to save as an .srt next to the video. */
+  srt?: string;
+}
+
+/** One program frame as a PNG (thumbnail grab). */
+export interface FrameRequest {
+  doc: ProjectDoc;
+  frame: number;
+  outputPath: string;
+  textImages?: Record<string, Uint8Array>;
+  clipImages?: Record<string, { mask?: Uint8Array; ring?: Uint8Array }>;
+}
+
+export interface SilenceRequest {
+  path: string;
+  /** Part of the file to analyse (the clip's source range). */
+  startSec: number;
+  durationSec: number;
+  settings: SilenceSettings;
+}
+
+export interface CaptionModelStatus {
+  ready: boolean;
+  /** Download size of the speech model. */
+  sizeBytes: number;
+}
+
+export interface CaptionProgress {
+  stage: 'download' | 'audio' | 'transcribe';
+  /** 0..1, or null when unknown. */
+  fraction: number | null;
+}
+
+export interface TranscribeRequest {
+  doc: ProjectDoc;
+  range: Range;
 }
 
 export interface LoudnessRequest {
@@ -85,6 +127,10 @@ export interface ScutApi {
     exportVideo(defaultName: string): Promise<string | null>;
     locateMedia(fileName: string): Promise<string | null>;
     confirm(opts: ConfirmOptions): Promise<number>;
+    /** Picks a .cube LUT. */
+    openLut(): Promise<string | null>;
+    /** A save dialog for any file type (PNG thumbnails, MP3/WAV, .srt…). */
+    saveFile(opts: { title: string; defaultName: string; filters: { name: string; extensions: string[] }[] }): Promise<string | null>;
   };
 
   project: {
@@ -112,6 +158,24 @@ export interface ScutApi {
     analyzeBeats(path: string): Promise<BeatAnalysis>;
     /** Path of the noise-reduced version of a file's audio (made once per strength, cached). */
     denoise(path: string, info: MediaInfo, strength: number): Promise<string>;
+    /** Path of a reversed copy of [inSec, outSec) of a file (made once, cached). */
+    reverse(media: MediaItem, inSec: number, outSec: number): Promise<string>;
+    /** Pauses in part of a file's audio, in seconds from startSec. */
+    silences(req: SilenceRequest): Promise<{ start: number; end: number }[]>;
+    /** Small RGB samples (64x36 each) of a file's picture at the given times, for Auto Color. */
+    colorSamples(path: string, times: number[]): Promise<Uint8Array>;
+    /** Reads a .cube LUT file. */
+    readLut(path: string): Promise<CubeLut>;
+  };
+
+  captions: {
+    modelStatus(): Promise<CaptionModelStatus>;
+    /** Downloads the speech model (once, checksum-verified). */
+    downloadModel(): Promise<void>;
+    /** The timeline's speech as timed words. */
+    transcribe(req: TranscribeRequest): Promise<CaptionWord[]>;
+    cancel(): Promise<void>;
+    onProgress(listener: (e: CaptionProgress) => void): () => void;
   };
 
   exporter: {
@@ -121,6 +185,8 @@ export interface ScutApi {
     onProgress(listener: (e: ExportProgressEvent) => void): () => void;
     /** Integrated loudness / true peak of the mix (before master gain), or null. */
     measureLoudness(req: LoudnessRequest): Promise<{ integratedLufs: number; truePeakDb: number } | null>;
+    /** Saves one program frame as a PNG. */
+    frame(req: FrameRequest): Promise<ExportResult>;
   };
 
   shell: {
@@ -146,6 +212,8 @@ export const IPC = {
   dialogExportVideo: 'dialog:export-video',
   dialogLocateMedia: 'dialog:locate-media',
   dialogConfirm: 'dialog:confirm',
+  dialogOpenLut: 'dialog:open-lut',
+  dialogSaveFile: 'dialog:save-file',
   projectRead: 'project:read',
   projectWrite: 'project:write',
   projectExists: 'project:exists',
@@ -159,6 +227,16 @@ export const IPC = {
   mediaAsset: 'media:asset',
   mediaBeats: 'media:beats',
   mediaDenoise: 'media:denoise',
+  mediaReverse: 'media:reverse',
+  mediaSilences: 'media:silences',
+  mediaColorSamples: 'media:color-samples',
+  mediaReadLut: 'media:read-lut',
+  captionsStatus: 'captions:status',
+  captionsDownload: 'captions:download',
+  captionsTranscribe: 'captions:transcribe',
+  captionsCancel: 'captions:cancel',
+  captionsProgress: 'captions:progress',
+  exportFrame: 'export:frame',
   exportLoudness: 'export:loudness',
   exportEncoders: 'export:encoders',
   exportStart: 'export:start',

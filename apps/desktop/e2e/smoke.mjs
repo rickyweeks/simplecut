@@ -83,6 +83,8 @@ const goToFrame = async (frame) => {
 
 try {
   await page.waitForSelector('[data-testid="timeline"]');
+  // First launch shows the tutorial; these tests drive the editor directly.
+  await page.click('[data-testid="tutorial-skip"]', { timeout: 5000 }).catch(() => {});
   await page.waitForTimeout(500);
   await shot('01-empty');
 

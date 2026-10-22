@@ -11,6 +11,7 @@ import {
   formatTimecode,
   isLinked,
   proxyReasons,
+  reframeForFormat,
   timelineDuration,
   trackLabel,
   updateMarker,
@@ -22,11 +23,12 @@ import {
 import * as edit from '../actions/edit';
 import { api } from '../lib/api';
 import { useAssets } from '../state/assets';
-import { getTimeline, useProject } from '../state/project';
+import { getDoc, getTimeline, useProject } from '../state/project';
 import { useSource } from '../state/source';
 import { useUi } from '../state/ui';
 import { IconButton, formatBytes } from './common';
 import { AudioClipSection, MixSection, MusicSection, TitleSection, TransitionSection } from './InspectorSections';
+import { ColorSection, SilenceSection, SpeedSection, TransformSection, YouTubeSection } from './InspectorVisual';
 import { MARKER_HEX } from './timeline/Ruler';
 
 export function Inspector() {
@@ -117,7 +119,10 @@ function TimelineProps({ tl }: { tl: Timeline }) {
       });
       if (r !== 0) return;
     }
-    useProject.getState().commitTimeline('Timeline settings', changeSettings(getTimeline(), patch));
+    let next = changeSettings(getTimeline(), patch);
+    // Shorts (9:16) fill the frame with every clip; back to 16:9 letterboxes again.
+    if (patch.format && (patch.format === 'vertical') !== (tl.settings.format === 'vertical')) next = reframeForFormat(next, getDoc().media, patch.format);
+    useProject.getState().commitTimeline(patch.format === 'vertical' ? 'Shorts mode' : 'Timeline settings', next);
   };
 
   return (
@@ -145,6 +150,7 @@ function TimelineProps({ tl }: { tl: Timeline }) {
         <Field label="Length" value={formatTimecode(timelineDuration(tl), fps)} mono />
         {!tl.settings.locked && <div className="hint">The format and frame rate will match the first video you add. You can change them any time.</div>}
       </div>
+      <YouTubeSection tl={tl} onShorts={(on) => void change({ format: on ? 'vertical' : '1080p' })} />
       <MixSection tl={tl} />
       <div className="section">
         <h4>Black frames</h4>
@@ -191,9 +197,14 @@ function ClipProps({ tl, media, ids }: { tl: Timeline; media: Record<string, Med
     const start = Math.min(...clips.map((c) => c.start));
     const end = Math.max(...clips.map(clipEnd));
     const audio = clips.filter((x) => x.kind === 'audio');
+    const pictures = clips.filter((x) => x.kind === 'video' && !x.text && media[x.mediaId]);
     return (
       <>
+      {pictures.length > 0 && <TransformSection clips={pictures} />}
+      {pictures.length > 0 && <ColorSection clips={pictures} />}
+      {clips.some((x) => !x.text && media[x.mediaId]) && <SpeedSection clips={clips.filter((x) => !x.text && media[x.mediaId])} media={media} />}
       {audio.length > 0 && <AudioClipSection tl={tl} clips={audio} media={media[audio[0]!.mediaId]} />}
+      {audio.length > 0 && <SilenceSection />}
       <div className="section">
         <h4>{clips.length} clips selected</h4>
         <Field label="Span" value={`${formatTimecode(start, fps)} – ${formatTimecode(end, fps)}`} mono />
@@ -208,7 +219,11 @@ function ClipProps({ tl, media, ids }: { tl: Timeline; media: Record<string, Med
   const onMusic = tl.tracks.find((t) => t.id === c.trackId)?.music;
   return (
     <>
+    {c.kind === 'video' && m && <TransformSection clips={[c]} />}
+    {c.kind === 'video' && m && <ColorSection clips={[c]} />}
+    {m && <SpeedSection clips={[c]} media={media} />}
     {c.kind === 'audio' && <AudioClipSection tl={tl} clips={[c]} media={m} />}
+    {c.kind === 'audio' && !onMusic && <SilenceSection />}
     {onMusic && <MusicSection media={m} />}
     <div className="section">
       <h4>{c.kind === 'video' ? 'Video clip' : 'Audio clip'}</h4>
@@ -217,13 +232,13 @@ function ClipProps({ tl, media, ids }: { tl: Timeline; media: Record<string, Med
       <Field label="Starts" value={formatTimecode(c.start, fps)} mono />
       <Field label="Ends" value={formatTimecode(clipEnd(c), fps)} mono />
       <Field label="Length" value={formatTimecode(c.duration, fps)} mono />
-      <Field label="Source in" value={formatTimecode(c.sourceIn, fps)} mono />
+      <Field label="Source in" value={formatTimecode(Math.round(c.sourceIn), fps)} mono />
       <Field label="Linked" value={isLinked(tl, c) ? 'Yes — moves with its other half' : 'No'} />
       <ClipActions linked={isLinked(tl, c)} onOpen={() => {
         useSource.getState().load(c.mediaId);
-        useSource.getState().set({ inSec: c.sourceIn / fps, outSec: (c.sourceIn + c.duration) / fps, timeSec: c.sourceIn / fps });
+        useSource.getState().set({ inSec: c.sourceIn / fps, outSec: (c.sourceIn + c.duration * (c.speed ?? 1)) / fps, timeSec: c.sourceIn / fps });
       }} path={m?.path} />
-      <div className="hint">{c.kind === 'video' ? 'Transitions: Ctrl+D at a cut, or drag one from the Transitions tab. Transform, speed and color arrive in Phase 3.' : 'Crossfade into the next clip with Shift+Ctrl+D.'}</div>
+      <div className="hint">{c.kind === 'video' ? 'Transitions: Ctrl+D at a cut, or drag one from the Transitions tab.' : 'Crossfade into the next clip with Shift+Ctrl+D.'}</div>
     </div>
     </>
   );

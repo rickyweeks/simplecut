@@ -21,7 +21,8 @@ export function MediaBin() {
   const focused = useUi((s) => s.focus === 'bin');
   const [dropping, setDropping] = useState(false);
   const [tab, setTab] = useState<'media' | 'titles' | 'transitions'>('media');
-  const items = Object.values(media);
+  // Reversed copies are made by SimpleCut and belong to their clips, not the bin.
+  const items = Object.values(media).filter((m) => !m.derived);
 
   return (
     <section

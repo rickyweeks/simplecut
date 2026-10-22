@@ -132,7 +132,7 @@ describe.skipIf(!haveBinaries)('phase 3 exports (real FFmpeg)', () => {
     const inside = `lte(pow(max(0,abs(X-${g.pw / 2})-${g.pw / 2 - r}),2)+pow(max(0,abs(Y-${g.ph / 2})-${g.ph / 2 - r}),2),${r * r})`;
     const mask = join(dir, 'mask.png');
     const ring = join(dir, 'ring.png');
-    ff(['-f', 'lavfi', '-i', `color=black:s=${g.pw}x${g.ph}`, '-vf', `format=gray,geq=lum='255*${inside}'`, '-frames:v', '1', mask]);
+    ff(['-f', 'lavfi', '-i', `color=white@0:s=${g.pw}x${g.ph}`, '-vf', `format=rgba,geq=r=255:g=255:b=255:a='255*${inside}'`, '-frames:v', '1', mask]);
     ff(['-f', 'lavfi', '-i', `color=white@0:s=${g.pw}x${g.ph}`, '-vf', `format=rgba,geq=r=255:g=255:b=255:a='255*${inside}*gt(min(min(X,${g.pw - 1}-X),min(Y,${g.ph - 1}-Y)),${g.border - 1})*0+255*${inside}*lt(min(min(X,${g.pw - 1}-X),min(Y,${g.ph - 1}-Y)),${g.border})'`, '-frames:v', '1', ring]);
     let tl = put(base(), { id: 'B', trackId: 't1', mediaId: 'b', start: 0, duration: 10 });
     tl = put(tl, { id: 'P', trackId: 't2', mediaId: 'a', start: 0, duration: 10, transform: t });
