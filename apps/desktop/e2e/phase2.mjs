@@ -104,6 +104,15 @@ try {
   await press('Control+Shift+z');
   await page.waitForSelector('.beat-tick', { timeout: 2000 });
   check(true, 'Ctrl+Shift+Z redoes it, beats included');
+  // Montage: with the footage selected (not the song), its Properties offer Cut to the music.
+  const v1 = page.locator('[data-testid="track-V1"] ~ .tl-lane [data-testid="clip"]');
+  const piecesBefore = await v1.count();
+  await v1.first().click({ position: { x: 20, y: 30 } });
+  await page.click('[data-testid="cut-on-beats"]');
+  const piecesAfter = await v1.count();
+  check(piecesAfter > piecesBefore + 3, `Cut on beats chops the selected footage (${piecesBefore} → ${piecesAfter} clips)`);
+  await press('Control+z');
+  check((await v1.count()) === piecesBefore, 'undo puts it back');
 
   step('A title from the Titles tab');
   await page.click('[data-testid="tab-titles"]');

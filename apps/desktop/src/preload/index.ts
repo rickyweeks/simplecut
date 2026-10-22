@@ -9,7 +9,7 @@ function listen<T>(channel: string, listener: (payload: T) => void): () => void 
 }
 
 const api: ScutApi = {
-  versions: { app: '1.0.0', electron: process.versions.electron ?? '', chrome: process.versions.chrome ?? '' },
+  versions: { app: '1.0.1', electron: process.versions.electron ?? '', chrome: process.versions.chrome ?? '' },
   pathForFile: (file) => webUtils.getPathForFile(file),
   mediaUrl: (path) => mediaUrlFor(path),
 

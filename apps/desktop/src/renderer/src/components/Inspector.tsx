@@ -27,7 +27,7 @@ import { getDoc, getTimeline, useProject } from '../state/project';
 import { useSource } from '../state/source';
 import { useUi } from '../state/ui';
 import { IconButton, formatBytes } from './common';
-import { AudioClipSection, MixSection, MusicSection, TitleSection, TransitionSection } from './InspectorSections';
+import { AudioClipSection, BeatCutSection, MixSection, MusicSection, TitleSection, TransitionSection } from './InspectorSections';
 import { ColorSection, SilenceSection, SpeedSection, TransformSection, YouTubeSection } from './InspectorVisual';
 import { MARKER_HEX } from './timeline/Ruler';
 
@@ -205,6 +205,7 @@ function ClipProps({ tl, media, ids }: { tl: Timeline; media: Record<string, Med
       {clips.some((x) => !x.text && media[x.mediaId]) && <SpeedSection clips={clips.filter((x) => !x.text && media[x.mediaId])} media={media} />}
       {audio.length > 0 && <AudioClipSection tl={tl} clips={audio} media={media[audio[0]!.mediaId]} />}
       {audio.length > 0 && <SilenceSection />}
+      {clips.some((x) => !x.text && !tl.tracks.find((t) => t.id === x.trackId)?.music) && <BeatCutSection />}
       <div className="section">
         <h4>{clips.length} clips selected</h4>
         <Field label="Span" value={`${formatTimecode(start, fps)} – ${formatTimecode(end, fps)}`} mono />
@@ -225,6 +226,7 @@ function ClipProps({ tl, media, ids }: { tl: Timeline; media: Record<string, Med
     {c.kind === 'audio' && <AudioClipSection tl={tl} clips={[c]} media={m} />}
     {c.kind === 'audio' && !onMusic && <SilenceSection />}
     {onMusic && <MusicSection media={m} />}
+    {!onMusic && <BeatCutSection />}
     <div className="section">
       <h4>{c.kind === 'video' ? 'Video clip' : 'Audio clip'}</h4>
       <Field label="Media" value={m?.name ?? 'Missing'} />
@@ -342,7 +344,7 @@ function MarkerProps({ tl, markerId }: { tl: Timeline; markerId: string }) {
         </div>
       </Field>
       <Field label="Chapter">
-        <label className="toggle" data-tip="Chapter markers become YouTube chapter timestamps (export arrives in Phase 4)">
+        <label className="toggle" data-tip="Chapter markers become YouTube chapter timestamps (Properties → YouTube → Copy chapters, with nothing selected)">
           <input type="checkbox" checked={marker.chapter} onChange={(e) => update({ chapter: e.target.checked }, 'Marker chapter')} />
           YouTube chapter
         </label>

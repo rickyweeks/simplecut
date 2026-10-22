@@ -12,6 +12,7 @@ import {
   audioTracks,
   denoiseStep,
   effectiveFades,
+  musicBeatFrames,
   previousAdjacent,
   trackLabel,
   updateClips,
@@ -28,6 +29,7 @@ import { liveEdit } from '../actions/edit';
 import { addBeatMarkersCmd, cutSelectionOnBeats, setMusicTrack } from '../actions/music';
 import { applyPresetStyle } from '../actions/titles';
 import { useAssets } from '../state/assets';
+import { useProject } from '../state/project';
 
 // ---------------------------------------------------------------------------
 // Small controls
@@ -226,17 +228,32 @@ export function MusicSection({ media }: { media: MediaItem | undefined }) {
               Mark every beat
             </button>
           </div>
-          <div className="hint">Montage: select your gameplay / FPV clips, then cut them on the beat and delete the parts you don't want.</div>
-          <div className="actions">
-            <button type="button" className="btn" onClick={() => cutSelectionOnBeats('beats')} data-testid="cut-on-beats">
-              Cut selected on beats
-            </button>
-            <button type="button" className="btn" onClick={() => cutSelectionOnBeats('downbeats')}>
-              Cut on bars
-            </button>
-          </div>
+          <div className="hint">Montage: select your gameplay or FPV clips; their Properties show Cut to the music.</div>
         </>
       )}
+    </div>
+  );
+}
+
+/**
+ * On footage, while the music track has beats: cut the selected clips at every beat or bar.
+ * (It lives here, on the clips being cut, because selecting them is what the cut acts on.)
+ */
+export function BeatCutSection() {
+  const hasBeats = useProject((s) => musicBeatFrames(s.doc.timeline, s.doc.media).length > 0);
+  if (!hasBeats) return null;
+  return (
+    <div className="section" data-testid="beat-cut-section">
+      <h4>Cut to the music</h4>
+      <div className="hint">Cuts the selected clips at every beat (or bar) of the music track. Then delete the pieces you don't want.</div>
+      <div className="actions">
+        <button type="button" className="btn" onClick={() => cutSelectionOnBeats('beats')} data-testid="cut-on-beats">
+          Cut on beats
+        </button>
+        <button type="button" className="btn" onClick={() => cutSelectionOnBeats('downbeats')}>
+          Cut on bars
+        </button>
+      </div>
     </div>
   );
 }
