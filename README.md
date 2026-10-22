@@ -10,7 +10,14 @@ thumbnails and export presets.
 
 ---
 
-## Requirements
+## Install (to try it)
+
+Download `SimpleCut-Setup-<version>.exe` from this repository's **Releases** page and run it.
+The installer isn't code-signed, so Windows may show "Windows protected your PC": click
+**More info → Run anyway**. SimpleCut installs for your user only (no admin needed) and adds a
+Start menu shortcut. The first launch shows a short tutorial.
+
+## Requirements (to build from source)
 
 - Windows 10 or 11, 64-bit
 - [Node.js](https://nodejs.org) **22.12+** (24 LTS recommended)
