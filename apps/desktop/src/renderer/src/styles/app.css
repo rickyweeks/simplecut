@@ -456,7 +456,9 @@ input:focus {
   inset: 0;
   overflow: auto;
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(128px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+  /* Items clip their overflow, so auto rows would squeeze them to fit instead of scrolling. */
+  grid-auto-rows: max-content;
   align-content: start;
   gap: 8px;
   padding: 8px;

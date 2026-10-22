@@ -105,6 +105,24 @@ try {
 
   step('A title from the Titles tab');
   await page.click('[data-testid="tab-titles"]');
+  // In a smaller window the presets fall into one column: they must scroll, not get squashed.
+  const size = await app.evaluate(({ BrowserWindow }) => {
+    const w = BrowserWindow.getAllWindows()[0];
+    const s = w.getSize();
+    w.setSize(1465, 956);
+    return s;
+  });
+  await page.waitForTimeout(400);
+  // Each tile must be tall enough for its whole picture and its name (tiles clip what doesn't fit).
+  const tiles = await page.$$eval('[data-testid="title-preset"]', (items) =>
+    items.map((i) => {
+      const h = (sel) => i.querySelector(sel).getBoundingClientRect().height;
+      return Math.round(i.getBoundingClientRect().height - h('.bin-thumb') - h('.bin-name'));
+    }),
+  );
+  check(tiles.length === 8 && tiles.every((spare) => spare >= 0), `all 8 title previews show their whole picture and name in a narrow panel (${tiles.join(', ')} px spare)`);
+  await app.evaluate(({ BrowserWindow }, s) => BrowserWindow.getAllWindows()[0].setSize(s[0], s[1]), size);
+  await page.waitForTimeout(400);
   await page.click('[data-testid="program-tc"]');
   await press('Home');
   await press('Shift+ArrowRight', 6);
