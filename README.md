@@ -2,10 +2,11 @@
 
 A beginner-friendly video editor for YouTube on Windows: "Premiere Pro with the fluff removed".
 Same core shortcuts and source/program workflow as Premiere, but only what simple YouTube edits need.
-OLED dark UI (true black surfaces).
+Dark UI: true black behind the picture and between panels, charcoal panels and controls.
 
-**Status: Phases 1 (foundation and core editing) and 2 (audio, music beats, titles, transitions)
-are complete.** Phases 3–4 (color, effects, captions, Shorts) are not started yet.
+**Status: all four phases are complete** — core editing; audio, music beats, titles and
+transitions; transforms, speed, color and talking-head tools; captions, Shorts, chapters,
+thumbnails and export presets.
 
 ---
 
@@ -26,7 +27,9 @@ pnpm dev
 ```
 
 `pnpm install` downloads Electron and the FFmpeg binaries (`ffmpeg-static`, `ffprobe-static`);
-`pnpm dev` copies them into `apps/desktop/resources/bin` and starts the app with hot reload.
+`pnpm dev` copies them into `apps/desktop/resources/bin`, downloads the pinned whisper.cpp
+engine for auto captions (official `whisper-bin-x64.zip` release, SHA-256 checked, 12 MB after
+unpacking) into `resources/bin/whisper`, and starts the app with hot reload.
 
 ## Test it
 
@@ -39,7 +42,17 @@ beat detection on synthetic songs, mixing, transitions, titles) and the export i
 which render real MP4s with the bundled FFmpeg (software, plus GPU encode/decode when a hardware
 encoder is present) and check them frame by frame. The Phase 2 integration tests compare exported
 dissolves, dips, slides and titles against the preview's math, and measure exported volume, fades,
-crossfades, ducking and loudness.
+crossfades, ducking and loudness. The Phase 3/4 ones check a color grade (with an imported LUT)
+against the core color math, picture-in-picture placement and rounded corners, smooth zoom, 2×
+speed frame by frame and its pitch, reverse, thumbnail grabs, MP3 export, silence detection, and
+real auto captions with whisper.cpp.
+
+The caption tests need the speech model in `apps/desktop/.models/` (git-ignored; they are skipped
+without it):
+
+```bash
+curl -L -o apps/desktop/.models/ggml-base.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+```
 
 ```bash
 pnpm e2e
@@ -47,9 +60,12 @@ pnpm e2e
 
 Builds the app and runs the end-to-end scenarios: the Phase 1 acceptance test, the extras
 (VFR proxy, real-time playback, a 30-minute 200-clip project's drag smoothness, crash recovery),
-and Phase 2 (Ctrl+D, Add music with beat detection and Shift+↓ beat jumps, undo/redo, a title
+Phase 2 (Ctrl+D, Add music with beat detection and Shift+↓ beat jumps, undo/redo, a title
 typed and dragged on the picture, the volume line, noise reduction, loudness, and an export that
-contains all of it).
+contains all of it), and Phases 3/4 (the first-launch tutorial, removing pauses, auto captions
+including the model prompt, picture-in-picture moved and resized on the picture, a color look,
+Paste Attributes, speed, reverse, a thumbnail grab, Shorts mode with a vertical export plus .srt,
+and an MP3 export). The Phase 3/4 test makes its talking clip with Windows' built-in voice.
 
 The end-to-end tests drive the real Electron app with Playwright (only native file dialogs are
 stubbed) and write screenshots to `apps/desktop/e2e-output/`. The acceptance test imports media,
@@ -68,7 +84,7 @@ choose the folder, registers `.scut` files).
 
 ---
 
-## How to use it (60-second tour)
+## How to use it
 
 1. **Import**: drag videos onto the window (or `Ctrl+I`).
 2. **Pick the good part**: double-click a clip in the Media bin. In the Source monitor, play with
@@ -88,7 +104,24 @@ choose the folder, registers `.scut` files).
    beats. Beat ticks show on the clip, clips snap to them, `Shift+↑`/`Shift+↓` jump beat to
    beat, and *Cut selected on beats* chops gameplay/FPV footage into a montage. The music ducks
    automatically while people talk.
-9. **Export**: the big **Export for YouTube** button (`Ctrl+M`).
+9. **Position & size**: select a clip and use the Inspector, or drag it on the Program monitor
+   (corners resize, the knob rotates). One click makes a **picture-in-picture** facecam in any
+   corner; **Punch-in** zooms to 110 % / 125 %, or **Smooth** zooms slowly across the clip.
+10. **Speed & reverse**: 0.5× to 2× or any custom speed (`Ctrl+R`); the sound keeps its pitch.
+    **Reverse** plays a clip backwards.
+11. **Color**: **Auto Color**, five sliders, eight looks and your own `.cube` LUTs. Copy a clip
+    (`Ctrl+C`), select others and press `Ctrl+Alt+V` to paste its color (or audio, size, title style).
+12. **Talking-head videos**: select the clip and press **Find pauses** (Inspector). The pauses
+    show in red; click any you want to keep, then **Remove**.
+13. **YouTube extras** (Inspector, with nothing selected): **Auto captions** (runs on your PC;
+    the first time it downloads a 141 MB speech model after asking), **Make it a Short** (9:16),
+    **Copy chapters** from markers ticked as chapters, and **Save frame** for a thumbnail
+    (`Ctrl+Shift+E`).
+14. **Export**: the big **Export for YouTube** button (`Ctrl+M`). Pick YouTube, 4K, 1080p, Shorts,
+    MP3 or WAV; captions are saved as an `.srt` next to the video.
+
+A short tutorial walks you through the basics the first time you open SimpleCut (Settings →
+*Show the tutorial again*).
 
 Hold `?` anywhere for every shortcut; every tooltip shows its shortcut too.
 
@@ -102,24 +135,30 @@ simplecut/
 │  ├─ src/types.ts           timeline data model
 │  ├─ src/timeline/          edit operations: insert, overwrite, ripple, lift/extract,
 │  │                         razor, Q/W, trims, move/duplicate/paste, link/group, snapping,
-│  │                         transitions, music track
+│  │                         transitions, music track, speed, transforms, Paste Attributes
 │  ├─ src/audio/             beat detection, mixing rules (gain, fades, crossfades,
 │  │                         ducking, loudness, noise reduction)
 │  ├─ src/text/              title presets, styles and animations
+│  ├─ src/color/             color grades baked into one 3D LUT, .cube parsing, Auto Color
+│  ├─ src/captions/          whisper output → timed words → captions, styles, .srt
 │  ├─ src/history.ts         unlimited undo/redo
 │  ├─ src/project/           .scut read/write, portable paths, project document helpers
-│  ├─ src/media/             ffprobe parsing + VFR detection, proxy rules, waveform/thumbnail args
-│  ├─ src/export/            timeline → FFmpeg filter graph, encoders, YouTube presets, progress
+│  ├─ src/media/             ffprobe parsing + VFR detection, proxy rules, waveform/thumbnail
+│  │                         args, chunked reverse
+│  ├─ src/export/            timeline → FFmpeg filter graph, encoders, YouTube presets, export
+│  │                         presets, thumbnails, chapters, progress
 │  ├─ src/platform.ts        interfaces every platform implements
 │  └─ test/                  unit tests (vitest)
 └─ apps/desktop/             ← Windows app (Electron + React + Vite)
    ├─ src/main/              FFmpeg runner, hardware encoder detection, media cache
    │                         (proxies, waveforms, thumbnails, beats, cleaned-up audio),
-   │                         beat-detection worker thread, exporter, scut:// media
-   │                         protocol, atomic file I/O, crash recovery, IPC
+   │                         beat-detection worker thread, exporter, captions (model
+   │                         download + whisper.cpp), scut:// media protocol, atomic file
+   │                         I/O, crash recovery, IPC
    ├─ src/preload/           the typed `window.scut` bridge (contextIsolation + sandbox)
    ├─ src/shared/api.ts      IPC contract shared by main, preload and renderer
-   ├─ src/renderer/          UI (React + Zustand) and the real-time preview engine
+   ├─ src/renderer/          UI (React + Zustand) and the real-time preview engine (canvas
+   │                         compositor, WebGL2 color, Web Audio mixer)
    ├─ test/                  export integration tests with the real FFmpeg
    └─ e2e/                   Playwright end-to-end tests
 ```
@@ -173,6 +212,22 @@ platform interfaces with its own storage, FFmpeg and preview.
 - **Transitions use real handles.** Dissolves and slides use media beyond the cut (FFmpeg `xfade`),
   dips overlay a full-frame color layer; the integration tests compare exported frames with the
   preview's formulas.
+- **One shared picture geometry.** Where a transformed clip lands (size in whole pixels, crop,
+  corners, border) is computed by the core and used by both the preview canvas and the export
+  graph (crop → scale → rounded mask → border → rotate → opacity → place); a smooth zoom is a
+  sub-pixel `perspective` magnification in the export. Masks and borders are drawn by the same
+  canvas code for both.
+- **Color is one LUT.** Every grade (imported LUT, exposure and white balance in linear light,
+  contrast, saturation, look) is baked by the core into a 33³ table. The preview samples it as a
+  WebGL2 3D texture, the export writes it as a `.cube` for FFmpeg's `lut3d` (both trilinear, both
+  BT.709), so graded footage matches.
+- **Speed is a source mapping.** A clip at speed s shows source frame `sourceIn + (f − start)·s`;
+  the export uses `setpts` + `fps` (and pitch-keeping `atempo`) and the preview seeks to the very
+  frame that picks. Reverse makes a reversed copy of just the part a clip uses (in short chunks,
+  so memory stays bounded) and plays that forwards.
+- **Captions run locally.** whisper.cpp (shipped, 12 MB) with the English base model (downloaded
+  once, checksum-verified). Word times come from whisper's token-level DTW timestamps (its segment
+  times drift after pauses); the speech is the mix without the music track.
 - **Windows paths.** FFmpeg is spawned without a shell (arguments go through `CreateProcessW` as
   UTF-16), so spaces, non-ASCII names and long paths work; the tests use such paths on purpose.
   Project saves are atomic (temp file + rename).
@@ -184,7 +239,7 @@ A single human-readable JSON file:
 ```json
 {
   "format": "simplecut-project",
-  "version": 2,
+  "version": 3,
   "project": { "id": "…", "name": "My Vlog" },
   "media": [{ "id": "…", "path": "footage/day 1.mp4", "absolutePath": "C:/Videos/footage/day 1.mp4", "durationSec": 612.4, "…": "…" }],
   "timeline": { "settings": { "format": "1080p", "fps": 30 }, "tracks": ["…"], "clips": { "…": "…" }, "markers": [] }
@@ -193,13 +248,15 @@ A single human-readable JSON file:
 
 On open, media is looked for next to the project first, then at its original location; anything
 still missing triggers the **Relink** dialog (locating one file finds the others in that folder).
-Version 1 projects (Phase 1) open and are upgraded on the next save.
+Older projects (versions 1 and 2) open and are upgraded on the next save.
 
 ### Where things are stored
 
 - Settings: `%APPDATA%\SimpleCut` (Local Storage)
-- Proxies, waveforms, thumbnails, detected beats, noise-reduced audio:
-  `%APPDATA%\SimpleCut\media-cache` (safe to delete)
+- Proxies, waveforms, thumbnails, detected beats, noise-reduced audio, reversed copies:
+  `%APPDATA%\SimpleCut\media-cache` (safe to delete; reversed clips are remade from the original
+  if their copy is gone)
+- The captions speech model: `%APPDATA%\SimpleCut\models`
 - Crash-recovery autosaves (every 60 s while there are unsaved changes): `%APPDATA%\SimpleCut\recovery`
 
 Set `SIMPLECUT_USER_DATA` to use another folder (used by the tests; also works as a portable mode).
@@ -237,12 +294,46 @@ Set `SIMPLECUT_USER_DATA` to use another folder (used by the tests; also works a
   Shift+Ctrl+D, drag from the Transitions tab, resize on the timeline, Inspector controls
 - Import also accepts FLAC and OGG
 
+## Phase 3 scope (done)
+
+- Transforms: position, size, rotation, crop, opacity, fit/fill, rounded corners, border; in the
+  Inspector or by dragging on the Program monitor (move, corner resize, rotate knob, center snapping)
+- Presets: picture-in-picture in any corner (border + rounded corners), punch-in 110 % / 125 %,
+  smooth zoom
+- Speed: 0.5× / 1× / 1.5× / 2× / custom with pitch-corrected audio; later clips follow; reverse
+- Color: exposure, contrast, saturation, temperature, tint; Auto Color (white balance, exposure,
+  contrast); 8 looks with adjustable strength; `.cube` LUT import (3D and 1D)
+- Paste Attributes (`Ctrl+Alt+V`): color, audio, position/size, text style
+- Remove pauses (auto jump cut): threshold, minimum length and padding; red regions to review;
+  one-step removal that never chops the music track
+- Beginner helpers: first-launch tutorial that follows what you do, `?` shortcut overlay, empty-
+  state hints everywhere
+
+## Phase 4 scope (done)
+
+- Auto captions on this PC (whisper.cpp): one-time model download with consent, progress, five
+  caption styles, a CC track of editable title clips, `.srt` export (alone or next to the video)
+- Shorts mode: 9:16 timeline, full-frame clips fill and center-crop, drag to reframe
+- Chapters: markers ticked as chapters become YouTube timestamps (copied to the clipboard), with
+  warnings when YouTube would ignore them (fewer than 3, shorter than 10 s; 00:00 added for you)
+- Thumbnail grab: the program frame at the playhead as a full-size PNG, rendered by the export graph
+- Export presets: YouTube (timeline size), 4K, 1080p, Shorts 1080×1920, MP3, WAV
+
+## Third-party components
+
+FFmpeg (LGPL/GPL builds via `ffmpeg-static`), whisper.cpp (MIT) and its `ggml-base.en` model
+(MIT, from the Whisper project), Electron, React, Zustand, lucide icons, react-resizable-panels.
+
 ## Known limitations
 
 - HDR (HLG/PQ) footage is not tone-mapped yet; it previews and exports as SDR-tagged.
 - The bundled `ffprobe-static` is an older FFmpeg 4.0 build; it reads all supported formats, but
   very new codecs may report less detail.
-- Paste attributes (`Ctrl+Alt+V`) arrives with effects in Phase 3.
+- Auto captions are English only (the English model is the most accurate at this size).
+- A smooth zoom is magnified from the picture rendered at its smaller size in the export, so the
+  zoomed-in end is a touch softer than a fixed punch-in of the same amount.
+- Reverse makes a copy of the part of the file it reverses (high quality), which uses disk space
+  in the media cache.
 - Beat detection expects music with a steady beat (most pop, EDM, rock, hip-hop). Songs without
   one get no beat markers, and the app says so.
 - Loudness normalization is a measurement: re-run it after big changes to the mix.
