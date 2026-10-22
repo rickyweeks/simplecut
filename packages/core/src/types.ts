@@ -77,12 +77,26 @@ export interface MediaInfo {
   fileSize: number;
 }
 
+/** Result of beat analysis on a media file's audio. Times are seconds into the media. */
+export interface BeatAnalysis {
+  /** Steady, rhythmic material (music) rather than speech, ambience or game sound. */
+  music: boolean;
+  /** How clear the pulse is, 0..1. */
+  confidence: number;
+  bpm: number;
+  beats: number[];
+  /** The first beat of each bar (assuming 4/4). */
+  downbeats: number[];
+}
+
 export interface MediaItem extends MediaInfo {
   id: Id;
   /** Display name (file name by default). */
   name: string;
   /** Absolute path on this machine. Stored relative to the project file on disk. */
   path: string;
+  /** Present once the audio has been analysed for beats. */
+  beats?: BeatAnalysis;
 }
 
 // ---------------------------------------------------------------------------
@@ -102,7 +116,67 @@ export interface Track {
   solo: boolean;
   /** Video: exclude this track from the program output. */
   hidden: boolean;
+  /** Audio: track volume in dB (0 = unchanged). */
+  volumeDb?: number;
+  /**
+   * Audio: the music track ("Add music"). Its clips get beat markers and beat snapping, and
+   * it automatically ducks under dialogue on the other tracks.
+   */
+  music?: boolean;
 }
+
+/**
+ * Transitions live on clips. `transitionIn` on a clip that directly follows another clip
+ * on its track is a two-sided transition across that cut; with nothing before it, it fades
+ * the clip in. `transitionOut` only applies when nothing directly follows the clip.
+ */
+export type VideoTransitionType = 'dissolve' | 'dipBlack' | 'dipWhite' | 'slide';
+export type TransitionType = VideoTransitionType | 'crossfade';
+
+export interface Transition {
+  type: TransitionType;
+  /** Length in frames, centered on the cut for two-sided transitions. */
+  duration: Frame;
+}
+
+export type TextAnimation = 'none' | 'fade' | 'slide' | 'pop';
+export type TextAlign = 'left' | 'center' | 'right';
+
+/** Everything about how a title looks. Sizes are pixels at 1080p and scale with the frame. */
+export interface TextStyle {
+  font: string;
+  size: number;
+  color: string;
+  bold: boolean;
+  italic: boolean;
+  align: TextAlign;
+  outlineColor: string;
+  /** 0 = no outline. */
+  outlineWidth: number;
+  shadow: boolean;
+  shadowColor: string;
+  shadowBlur: number;
+  shadowDistance: number;
+  box: boolean;
+  boxColor: string;
+  boxOpacity: number;
+  boxPadding: number;
+  boxRadius: number;
+  /** Center of the text block, as a fraction of the frame (0..1). */
+  x: number;
+  y: number;
+  animIn: TextAnimation;
+  animOut: TextAnimation;
+}
+
+export interface TextContent extends TextStyle {
+  content: string;
+  /** Which preset it started from (informational). */
+  preset?: string;
+}
+
+/** Clips that are titles have no media; their mediaId is this value. */
+export const TEXT_MEDIA_ID = '';
 
 export interface Clip {
   id: Id;
@@ -120,6 +194,17 @@ export interface Clip {
   linkId?: Id;
   /** Clips that share a groupId are selected and moved together (Ctrl+G). */
   groupId?: Id;
+  /** Audio: clip volume in dB (0 = unchanged). */
+  volumeDb?: number;
+  /** Audio: fade-in / fade-out lengths in frames. */
+  fadeIn?: Frame;
+  fadeOut?: Frame;
+  /** Audio: background-noise reduction strength, 0 (off) .. 1. */
+  denoise?: number;
+  /** Present on title clips (video tracks only). */
+  text?: TextContent;
+  transitionIn?: Transition;
+  transitionOut?: Transition;
 }
 
 // ---------------------------------------------------------------------------
@@ -155,6 +240,12 @@ export interface Timeline {
   targetVideoTrackId: Id | null;
   /** Source patching: where insert/overwrite places audio. Null = don't place audio. */
   targetAudioTrackId: Id | null;
+  /** Gain applied to the whole mix in dB (set by "Normalize loudness"). */
+  masterGainDb?: number;
+  /** Last loudness measurement of the mix (before master gain), LUFS / dBTP. */
+  loudness?: { integratedLufs: number; truePeakDb: number };
+  /** How far music tracks duck under dialogue, in dB (negative; 0 turns ducking off). */
+  duckDb?: number;
 }
 
 /** Everything that undo/redo covers. */

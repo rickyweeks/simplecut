@@ -32,6 +32,19 @@ export function withIds(clip: Clip, linkId: Id | undefined, groupId: Id | undefi
   return out;
 }
 
+/**
+ * Removes what belongs to one edge of a clip (its transition and audio fade). Used when an
+ * edit creates a brand-new edge, e.g. the inner edges of a razor cut.
+ */
+export function stripEdge(clip: Clip, edge: 'in' | 'out'): Clip {
+  if (edge === 'in') {
+    const { transitionIn: _t, fadeIn: _f, ...rest } = clip;
+    return rest;
+  }
+  const { transitionOut: _t, fadeOut: _f, ...rest } = clip;
+  return rest;
+}
+
 export function setClips(tl: Timeline, updates: Clip[], removeIds: Iterable<Id> = []): Timeline {
   const clips = { ...tl.clips };
   for (const id of removeIds) delete clips[id];
@@ -43,11 +56,14 @@ export function setClips(tl: Timeline, updates: Clip[], removeIds: Iterable<Id> 
 export function splitClip(clip: Clip, frame: Frame, ids: IdGen, links: IdRemap): [Clip, Clip] | null {
   if (frame <= clip.start || frame >= clipEnd(clip)) return null;
   const leftDuration = frame - clip.start;
-  const left: Clip = { ...clip, duration: leftDuration };
-  const right = withIds(
-    { ...clip, id: ids(), start: frame, duration: clip.duration - leftDuration, sourceIn: clip.sourceIn + leftDuration },
-    links.get(clip.linkId),
-    clip.groupId,
+  const left = stripEdge({ ...clip, duration: leftDuration }, 'out');
+  const right = stripEdge(
+    withIds(
+      { ...clip, id: ids(), start: frame, duration: clip.duration - leftDuration, sourceIn: clip.sourceIn + leftDuration },
+      links.get(clip.linkId),
+      clip.groupId,
+    ),
+    'in',
   );
   return [left, right];
 }
@@ -87,18 +103,21 @@ export function clearRange(
       if (c.start >= start && cEnd <= end) {
         removed.push(c.id);
       } else if (c.start < start && cEnd > end) {
-        updates.push({ ...c, duration: start - c.start });
+        updates.push(stripEdge({ ...c, duration: start - c.start }, 'out'));
         updates.push(
-          withIds(
-            { ...c, id: ids(), start: end, duration: cEnd - end, sourceIn: c.sourceIn + (end - c.start) },
-            links.get(c.linkId),
-            c.groupId,
+          stripEdge(
+            withIds(
+              { ...c, id: ids(), start: end, duration: cEnd - end, sourceIn: c.sourceIn + (end - c.start) },
+              links.get(c.linkId),
+              c.groupId,
+            ),
+            'in',
           ),
         );
       } else if (c.start < start) {
-        updates.push({ ...c, duration: start - c.start });
+        updates.push(stripEdge({ ...c, duration: start - c.start }, 'out'));
       } else {
-        updates.push({ ...c, start: end, duration: cEnd - end, sourceIn: c.sourceIn + (end - c.start) });
+        updates.push(stripEdge({ ...c, start: end, duration: cEnd - end, sourceIn: c.sourceIn + (end - c.start) }, 'in'));
       }
     }
   }

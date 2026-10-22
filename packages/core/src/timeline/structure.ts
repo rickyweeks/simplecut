@@ -2,6 +2,7 @@ import type { IdGen } from '../ids';
 import {
   FORMATS,
   FRAME_RATES,
+  type Clip,
   type FormatPreset,
   type FrameRate,
   type Frame,
@@ -13,7 +14,7 @@ import {
   type TrackKind,
 } from '../types';
 import { setClips, withIds } from './primitives';
-import { clipsOnTrack, getTrack, linkedClips, tracksOfKind } from './query';
+import { clipsOnTrack, getTrack, isTrackLocked, linkedClips, tracksOfKind } from './query';
 
 // ---------------------------------------------------------------------------
 // Tracks
@@ -49,10 +50,32 @@ export function removeTrack(tl: Timeline, trackId: Id): Timeline {
   };
 }
 
-export type TrackFlags = Partial<Pick<Track, 'locked' | 'muted' | 'solo' | 'hidden'>>;
+export type TrackFlags = Partial<Pick<Track, 'locked' | 'muted' | 'solo' | 'hidden' | 'volumeDb' | 'music'>>;
 
 export function updateTrack(tl: Timeline, trackId: Id, patch: TrackFlags): Timeline {
-  return { ...tl, tracks: tl.tracks.map((t) => (t.id === trackId ? { ...t, ...patch } : t)) };
+  // Only one music track at a time.
+  const tracks = tl.tracks.map((t) => {
+    if (t.id === trackId) return { ...t, ...patch };
+    if (patch.music && t.music) return { ...t, music: false };
+    return t;
+  });
+  return { ...tl, tracks };
+}
+
+/** Clip properties that can be changed in place (Inspector, handles on the clip). */
+export type ClipProps = Partial<Pick<Clip, 'volumeDb' | 'fadeIn' | 'fadeOut' | 'denoise' | 'text'>>;
+
+/** Changes properties of clips (skipping locked tracks). Undefined values remove the property. */
+export function updateClips(tl: Timeline, clipIds: Id[], patch: ClipProps): Timeline {
+  const updates: Clip[] = [];
+  for (const id of clipIds) {
+    const c = tl.clips[id];
+    if (!c || isTrackLocked(tl, c.trackId)) continue;
+    const next: Clip = { ...c, ...patch };
+    for (const k of Object.keys(patch) as (keyof ClipProps)[]) if (patch[k] === undefined) delete next[k];
+    updates.push(next);
+  }
+  return updates.length ? setClips(tl, updates) : tl;
 }
 
 /** Source patching: which track insert/overwrite uses. Null turns that stream off. */

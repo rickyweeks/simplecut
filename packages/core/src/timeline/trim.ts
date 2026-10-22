@@ -24,7 +24,7 @@ export function trimLimits(tl: Timeline, media: MediaLookup, clips: Clip[], edge
   for (const c of clips) {
     const m = media[c.mediaId];
     // Offline media: allow shortening but not extending past what we know.
-    const total = m ? mediaFrameCount(m, fps) : c.sourceIn + c.duration;
+    const total = c.text ? Number.POSITIVE_INFINITY : m ? mediaFrameCount(m, fps) : c.sourceIn + c.duration;
     const others = clipsOnTrack(tl, c.trackId).filter((o) => !ids.has(o.id));
     if (edge === 'start') {
       max = Math.min(max, c.duration - 1);

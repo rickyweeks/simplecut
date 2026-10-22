@@ -1,8 +1,11 @@
 import type { Frame, Id, Timeline } from '../types';
 import { clipEnd } from './query';
 
-/** Frames things snap to: playhead, clip edges, markers, In/Out and 0. Sorted and unique. */
-export function snapTargets(tl: Timeline, opts: { playhead?: Frame; exclude?: Iterable<Id> } = {}): Frame[] {
+/**
+ * Frames things snap to: playhead, clip edges, markers, In/Out and 0, plus `extra` (e.g.
+ * the music's beats). Sorted and unique.
+ */
+export function snapTargets(tl: Timeline, opts: { playhead?: Frame; exclude?: Iterable<Id>; extra?: Frame[] } = {}): Frame[] {
   const exclude = new Set(opts.exclude ?? []);
   const set = new Set<Frame>([0]);
   if (opts.playhead != null) set.add(opts.playhead);
@@ -14,6 +17,7 @@ export function snapTargets(tl: Timeline, opts: { playhead?: Frame; exclude?: It
   for (const m of tl.markers) set.add(m.frame);
   if (tl.inPoint != null) set.add(tl.inPoint);
   if (tl.outPoint != null) set.add(tl.outPoint + 1);
+  for (const f of opts.extra ?? []) set.add(f);
   return [...set].sort((a, b) => a - b);
 }
 
