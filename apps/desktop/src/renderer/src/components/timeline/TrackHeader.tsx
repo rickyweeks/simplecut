@@ -1,5 +1,6 @@
 import { memo } from 'react';
-import { Eye, EyeOff, Lock, LockOpen } from 'lucide-react';
+import { Eye, EyeOff, Lock, LockOpen, Music } from 'lucide-react';
+import { setMusicTrack } from '../../actions/music';
 import { setTargetTrack, updateTrack, type Track, type TrackFlags } from '@simplecut/core';
 import { getTimeline, useProject } from '../../state/project';
 
@@ -41,6 +42,15 @@ export const TrackHeader = memo(function TrackHeader({ track, label, targeted }:
         </button>
       ) : (
         <>
+          <button
+            type="button"
+            className={`track-flag music${track.music ? ' on' : ''}`}
+            data-tip={track.music ? `${label} is the music track (beats, snapping, ducks under dialogue). Click to turn off.` : `Make ${label} the music track`}
+            onClick={() => setMusicTrack(track.id, !track.music)}
+            aria-pressed={!!track.music}
+          >
+            <Music size={12} />
+          </button>
           <button
             type="button"
             className={`track-flag mute${track.muted ? ' on' : ''}`}

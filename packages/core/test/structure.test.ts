@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  annotateHistory,
   addMarker,
   addTrack,
   blackGaps,
@@ -205,6 +206,20 @@ describe('undo / redo history', () => {
     expect(h.entries.map((e) => e.state)).toEqual(['s0', 's2']);
     expect(pushHistory(h, 'noop', 's2')).toBe(h);
     expect(new Set(h.entries.map((e) => e.id)).size).toBe(2);
+  });
+
+  it('annotates every snapshot without adding an undo step', () => {
+    let h = createHistory({ n: 0 });
+    h = pushHistory(h, 'A', { n: 1 });
+    h = pushHistory(h, 'B', { n: 2 });
+    h = undo(h);
+    const tagged = annotateHistory(h, (s) => (s.n > 0 ? { ...s, tag: true } : s));
+    expect(tagged.entries.map((e) => e.label)).toEqual(['Start', 'A', 'B']);
+    expect(tagged.entries.map((e) => (e.state as { tag?: boolean }).tag)).toEqual([undefined, true, true]);
+    expect(tagged.entries[0]).toBe(h.entries[0]);
+    expect(tagged.index).toBe(1);
+    expect(canRedo(tagged)).toBe(true);
+    expect(annotateHistory(h, (s) => s)).toBe(h);
   });
 
   it('is unlimited', () => {

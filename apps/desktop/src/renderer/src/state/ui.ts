@@ -1,12 +1,14 @@
 import { create } from 'zustand';
 import type { Clip, Frame, Id, Range, Timeline } from '@simplecut/core';
 
-export type Tool = 'select' | 'razor';
+export type Tool = 'select' | 'razor' | 'text';
 export type PanelId = 'bin' | 'source' | 'program' | 'timeline';
 export type DialogId = 'export' | 'settings' | 'relink' | 'recovery' | null;
 
 export interface Selection {
   clipIds: Id[];
+  /** A transition, identified by the clip it belongs to and which edge. */
+  transition: { clipId: Id; edge: 'in' | 'out' } | null;
   gap: (Range & { trackId: Id }) | null;
   markerId: Id | null;
   mediaIds: Id[];
@@ -65,7 +67,7 @@ function loadPrefs(): Prefs {
   }
 }
 
-const emptySelection: Selection = { clipIds: [], gap: null, markerId: null, mediaIds: [] };
+const emptySelection: Selection = { clipIds: [], transition: null, gap: null, markerId: null, mediaIds: [] };
 let toastSeq = 0;
 
 export const useUi = create<UiState>((set, get) => ({

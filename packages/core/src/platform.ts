@@ -22,7 +22,9 @@ export interface MediaProber {
 /** Derived assets: proxies, waveforms, thumbnails. */
 export interface MediaAssetEvent {
   path: string;
-  kind: 'proxy' | 'waveform' | 'thumbnails' | 'poster';
+  kind: 'proxy' | 'waveform' | 'thumbnails' | 'poster' | 'denoise';
+  /** Which variant of the asset (e.g. the noise-reduction strength). */
+  variant?: string;
   state: 'queued' | 'running' | 'ready' | 'failed';
   progress?: number;
   /** Location of the finished asset (proxy file, thumbnail folder, …). */

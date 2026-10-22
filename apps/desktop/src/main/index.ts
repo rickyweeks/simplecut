@@ -2,11 +2,11 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BrowserWindow, Menu, app, dialog, ipcMain, nativeTheme, shell } from 'electron';
 import { IMPORT_EXTENSIONS, PROJECT_EXTENSION, type MediaInfo } from '@simplecut/core';
-import { IPC, type ConfirmOptions, type ExportStartRequest } from '../shared/api';
+import { IPC, type ConfirmOptions, type ExportStartRequest, type LoudnessRequest } from '../shared/api';
 import { encoderDetector, encoderInfo } from './encoders';
-import { cancelExport, startExport } from './exporter';
+import { cancelExport, measureLoudness, startExport } from './exporter';
 import { binariesPresent, killAll } from './ffmpeg';
-import { prepareMedia, prober } from './media';
+import { analyzeBeatsFor, denoisedAudio, prepareMedia, prober } from './media';
 import { registerMediaProtocol, registerSchemePrivileges } from './protocol';
 import { findInFolder, projectStorage, recovery } from './storage';
 
@@ -136,6 +136,9 @@ function registerIpc(): void {
 
   ipcMain.handle(IPC.mediaProbe, (_e, path: string) => prober.probe(path));
   ipcMain.handle(IPC.mediaPrepare, (_e, path: string, info: MediaInfo, opts?: { forceProxy?: boolean }) => prepareMedia(path, info, opts));
+  ipcMain.handle(IPC.mediaBeats, (_e, path: string) => analyzeBeatsFor(path));
+  ipcMain.handle(IPC.mediaDenoise, (_e, path: string, info: MediaInfo, strength: number) => denoisedAudio(path, info, strength));
+  ipcMain.handle(IPC.exportLoudness, (_e, req: LoudnessRequest) => measureLoudness(req));
 
   ipcMain.handle(IPC.exportEncoders, () => encoderInfo());
   ipcMain.handle(IPC.exportStart, (e, req: ExportStartRequest) => startExport(req, (p) => e.sender.send(IPC.exportProgress, p)));

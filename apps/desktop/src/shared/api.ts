@@ -2,7 +2,7 @@
  * The contract between the Electron main process and the UI (exposed as `window.scut`).
  * Types only, shared by main, preload and renderer.
  */
-import type { MediaAssetEvent, MediaInfo, ProjectDoc, Range, VideoEncoderId } from '@simplecut/core';
+import type { BeatAnalysis, DuckRegion, MediaAssetEvent, MediaInfo, ProjectDoc, Range, VideoEncoderId } from '@simplecut/core';
 
 export interface ThumbnailMeta {
   intervalSec: number;
@@ -28,6 +28,16 @@ export interface ExportStartRequest {
   outputPath: string;
   /** 'auto' = best detected hardware encoder, falling back to software. */
   encoder: 'auto' | 'software';
+  /** Transparent full-frame PNG (bytes) per title clip, drawn by the UI exactly like the preview. */
+  textImages?: Record<string, Uint8Array>;
+  /** Where dialogue is; the music track ducks under it. */
+  duckRegions?: DuckRegion[];
+}
+
+export interface LoudnessRequest {
+  doc: ProjectDoc;
+  range: Range;
+  duckRegions?: DuckRegion[];
 }
 
 export interface ExportProgressEvent {
@@ -98,6 +108,10 @@ export interface ScutApi {
     /** Starts background poster/waveform/thumbnail/proxy work (cached on disk). */
     prepare(path: string, info: MediaInfo, opts?: { forceProxy?: boolean }): Promise<void>;
     onAsset(listener: (e: AssetEvent) => void): () => void;
+    /** Beats of a song (analysed once, cached). */
+    analyzeBeats(path: string): Promise<BeatAnalysis>;
+    /** Path of the noise-reduced version of a file's audio (made once per strength, cached). */
+    denoise(path: string, info: MediaInfo, strength: number): Promise<string>;
   };
 
   exporter: {
@@ -105,6 +119,8 @@ export interface ScutApi {
     start(req: ExportStartRequest): Promise<ExportResult>;
     cancel(): Promise<void>;
     onProgress(listener: (e: ExportProgressEvent) => void): () => void;
+    /** Integrated loudness / true peak of the mix (before master gain), or null. */
+    measureLoudness(req: LoudnessRequest): Promise<{ integratedLufs: number; truePeakDb: number } | null>;
   };
 
   shell: {
@@ -141,6 +157,9 @@ export const IPC = {
   mediaProbe: 'media:probe',
   mediaPrepare: 'media:prepare',
   mediaAsset: 'media:asset',
+  mediaBeats: 'media:beats',
+  mediaDenoise: 'media:denoise',
+  exportLoudness: 'export:loudness',
   exportEncoders: 'export:encoders',
   exportStart: 'export:start',
   exportCancel: 'export:cancel',

@@ -203,7 +203,7 @@ try {
   await page.waitForTimeout(500);
   check(existsSync(projectPath), 'project file written');
   const project = JSON.parse(readFileSync(projectPath, 'utf8'));
-  check(project.format === 'simplecut-project' && project.version === 1, 'versioned .scut format');
+  check(project.format === 'simplecut-project' && project.version === 2, 'versioned .scut format (v2)');
   check(project.media.every((m) => m.path && !m.path.includes('\\')), 'media paths stored relative with forward slashes');
 
   step('Preview frame for later comparison');

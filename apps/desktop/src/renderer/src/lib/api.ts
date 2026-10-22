@@ -24,6 +24,10 @@ export interface DragSource {
  */
 let currentDrag: DragSource | null = null;
 export const DRAG_MIME = 'application/x-simplecut-media';
+/** Title preset id, dragged from the Titles list. */
+export const TITLE_MIME = 'application/x-simplecut-title';
+/** Transition type, dragged from the Transitions list. */
+export const TRANSITION_MIME = 'application/x-simplecut-transition';
 
 export function beginDrag(e: React.DragEvent, src: DragSource): void {
   currentDrag = src;

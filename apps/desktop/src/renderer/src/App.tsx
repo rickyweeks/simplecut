@@ -1,5 +1,6 @@
 import { useEffect } from 'react';
 import { Group, Panel, Separator, useDefaultLayout } from 'react-resizable-panels';
+import { startMusicWatcher } from './actions/music';
 import { handleCloseRequest, importPaths, openProjectPath, startAutosave, startTitleSync } from './actions/project';
 import { TooltipLayer, Toasts } from './components/common';
 import { ExportDialog, RecoveryDialog, RelinkDialog, SettingsDialog, ShortcutSheet } from './components/Dialogs';
@@ -24,6 +25,7 @@ function startApp(): void {
   window.addEventListener('keydown', handleKeyDown);
   window.addEventListener('keyup', handleKeyUp);
   startAutosave();
+  startMusicWatcher();
   startTitleSync();
   api.app.onCloseRequest(() => void handleCloseRequest());
   api.app.onOpenFile((p) => void openProjectPath(p));

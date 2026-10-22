@@ -55,3 +55,19 @@ export function jumpTo<T>(h: History<T>, index: number): History<T> {
   if (index < 0 || index >= h.entries.length || index === h.index) return h;
   return { ...h, index };
 }
+
+/**
+ * Applies `fn` to every snapshot without adding an undo step. For derived data that's true
+ * whichever state you undo to (e.g. a song's detected beats), so undo never brings back a
+ * state without it.
+ */
+export function annotateHistory<T>(h: History<T>, fn: (state: T) => T): History<T> {
+  let changed = false;
+  const entries = h.entries.map((e) => {
+    const state = fn(e.state);
+    if (state === e.state) return e;
+    changed = true;
+    return { ...e, state };
+  });
+  return changed ? { ...h, entries } : h;
+}

@@ -1,4 +1,5 @@
-import { FilePlus2, FolderOpen, Import, Keyboard, Redo2, Save, Scissors, Settings, Undo2, Upload } from 'lucide-react';
+import { FilePlus2, FolderOpen, Import, Keyboard, Music, Redo2, Save, Scissors, Settings, Undo2, Upload } from 'lucide-react';
+import { addMusicCmd } from '../actions/music';
 import { canRedo, canUndo } from '@simplecut/core';
 import { redoCmd, undoCmd } from '../actions/edit';
 import { importDialog, newProject, openProjectDialog, saveProject } from '../actions/project';
@@ -26,6 +27,7 @@ export function TopBar() {
       <IconButton icon={<Save size={17} />} label="Save project" kbd="Ctrl+S" onClick={() => void saveProject()} testId="save" />
       <div className="topbar-sep" />
       <IconButton icon={<Import size={17} />} label="Import media" kbd="Ctrl+I" onClick={() => void importDialog()} />
+      <IconButton icon={<Music size={17} />} label="Add music (beat markers, snapping to the beat, auto-ducking)" onClick={() => void addMusicCmd()} testId="topbar-add-music" />
       <div className="topbar-sep" />
       <IconButton icon={<Undo2 size={17} />} label="Undo" kbd="Ctrl+Z" onClick={undoCmd} disabled={!canUndo(history)} />
       <IconButton icon={<Redo2 size={17} />} label="Redo" kbd="Shift+Ctrl+Z" onClick={redoCmd} disabled={!canRedo(history)} />

@@ -1,6 +1,10 @@
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeftToLine,
+  AudioLines,
+  Blend,
+  Music,
+  Type,
   ArrowRightToLine,
   ArrowUpFromLine,
   Bookmark,
@@ -18,7 +22,17 @@ import {
 } from 'lucide-react';
 import {
   FORMATS,
+  TEXT_PRESETS,
+  TRANSITION_LABELS,
   addTrack,
+  clipAt,
+  effectiveFades,
+  previousAdjacent,
+  setTransition,
+  trackTransitions,
+  transitionSpan,
+  updateClips,
+  type TransitionType,
   audioTracks,
   blackGaps,
   clipEnd,
@@ -47,9 +61,12 @@ import {
   type Timeline as TimelineModel,
   type Track,
 } from '@simplecut/core';
+import { applyDefaultTransition, dropTransition } from '../../actions/audio';
 import * as edit from '../../actions/edit';
+import { addMusicCmd, beatFrames } from '../../actions/music';
+import { addPresetTitle } from '../../actions/titles';
 import { importPaths } from '../../actions/project';
-import { DRAG_MIME, activeDrag, endDrag, type DragSource } from '../../lib/api';
+import { DRAG_MIME, TITLE_MIME, TRANSITION_MIME, activeDrag, endDrag, type DragSource } from '../../lib/api';
 import { useAssets } from '../../state/assets';
 import { getPlayhead, usePlayhead } from '../../state/playhead';
 import { getDoc, getTimeline, useProject } from '../../state/project';
@@ -57,7 +74,7 @@ import { useSource } from '../../state/source';
 import { MAX_PX_PER_FRAME, MIN_PX_PER_FRAME, useUi } from '../../state/ui';
 import { IconButton } from '../common';
 import { isOsFileDrag, osFilePaths } from '../MediaBin';
-import { ClipView } from './ClipView';
+import { ClipView, volumeToY, yToVolume } from './ClipView';
 import { PlayheadLine, Ruler } from './Ruler';
 import { TrackHeader } from './TrackHeader';
 
@@ -77,7 +94,10 @@ interface Row {
 type Drag =
   | { kind: 'move'; startX: number; startY: number; ids: string[]; base: TimelineModel; anchor: Clip; anchorIdx: number; dup: boolean; started: boolean; dt: number }
   | { kind: 'trim'; startX: number; ids: string[]; edge: Edge; base: TimelineModel; started: boolean; ripple: boolean }
-  | { kind: 'marquee'; startX: number; startY: number; base: TimelineModel; initial: string[]; started: boolean };
+  | { kind: 'marquee'; startX: number; startY: number; base: TimelineModel; initial: string[]; started: boolean }
+  | { kind: 'volume'; startX: number; startY: number; ids: string[]; base: TimelineModel; db0: number; bodyH: number; started: boolean }
+  | { kind: 'fade'; startX: number; startY: number; clipId: string; which: 'in' | 'out'; base: TimelineModel; f0: number; started: boolean }
+  | { kind: 'transition'; startX: number; startY: number; clipId: string; edge: 'in' | 'out'; base: TimelineModel; started: boolean };
 
 export function Timeline() {
   const committed = useProject((s) => s.doc.timeline);
@@ -233,7 +253,7 @@ export function Timeline() {
 
   const snapOne = (t: TimelineModel, frame: number, exclude: string[] = []) => {
     if (!useUi.getState().snapping) return { frame: Math.round(frame), at: null as number | null };
-    const s = snapFrame(snapTargets(t, { playhead: getPlayhead(), exclude }), frame, SNAP_PX / pxRef.current);
+    const s = snapFrame(snapTargets(t, { playhead: getPlayhead(), exclude, extra: beatFrames() }), frame, SNAP_PX / pxRef.current);
     return s != null ? { frame: s, at: s } : { frame: Math.round(frame), at: null };
   };
 
@@ -255,6 +275,17 @@ export function Timeline() {
     const base = getTimeline();
     const clipEl = target.closest('[data-clip-id]') as HTMLElement | null;
     const edgeEl = target.closest('[data-edge]') as HTMLElement | null;
+    const transEl = target.closest('[data-transition]') as HTMLElement | null;
+    if (transEl && ui.tool === 'select') {
+      const [clipId, edge] = transEl.dataset.transition!.split('|') as [string, 'in' | 'out'];
+      ui.select({ transition: { clipId, edge } });
+      ui.set({ inspectorTab: 'properties' });
+      if (target.closest('[data-tedge]')) {
+        contentRef.current!.setPointerCapture(e.pointerId);
+        dragRef.current = { kind: 'transition', startX: e.clientX, startY: e.clientY, clipId, edge, base, started: false };
+      }
+      return;
+    }
 
     if (clipEl) {
       const clip = base.clips[clipEl.dataset.clipId!];
@@ -265,6 +296,21 @@ export function Timeline() {
         return;
       }
       contentRef.current!.setPointerCapture(e.pointerId);
+      if (target.closest('[data-vol]')) {
+        const body = clipEl.querySelector('.clip-body') as HTMLElement;
+        const ids = ui.selection.clipIds.includes(clip.id) ? ui.selection.clipIds.filter((id) => base.clips[id]?.kind === 'audio') : [clip.id];
+        ui.select({ clipIds: ids });
+        dragRef.current = { kind: 'volume', startX: e.clientX, startY: e.clientY, ids, base, db0: clip.volumeDb ?? 0, bodyH: body.clientHeight, started: false };
+        return;
+      }
+      const fadeEl = target.closest('[data-fade]') as HTMLElement | null;
+      if (fadeEl) {
+        const which = fadeEl.dataset.fade as 'in' | 'out';
+        ui.select({ clipIds: [clip.id] });
+        const fades = effectiveFades(clip);
+        dragRef.current = { kind: 'fade', startX: e.clientX, startY: e.clientY, clipId: clip.id, which, base, f0: which === 'in' ? fades.fadeIn : fades.fadeOut, started: false };
+        return;
+      }
       if (edgeEl) {
         const edge = edgeEl.dataset.edge as Edge;
         const ids = edgeClips(base, clip.id, edge, !e.altKey).map((c) => c.id);
@@ -304,7 +350,7 @@ export function Timeline() {
       return;
     }
     const dx = e.clientX - d.startX;
-    const dy = d.kind === 'trim' ? 0 : e.clientY - d.startY;
+    const dy = d.kind === 'trim' || d.kind === 'fade' ? 0 : e.clientY - d.startY;
     if (!d.started) {
       if (Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
       d.started = true;
@@ -320,7 +366,7 @@ export function Timeline() {
       if (ui.snapping) {
         const moving = d.ids.map((id) => t.clips[id]).filter((c): c is Clip => !!c);
         const edges = moving.flatMap((c) => [c.start + delta, clipEnd(c) + delta]);
-        const s = snapEdges(snapTargets(t, { playhead: getPlayhead(), exclude: d.dup ? [] : d.ids }), edges, SNAP_PX / pxNow);
+        const s = snapEdges(snapTargets(t, { playhead: getPlayhead(), exclude: d.dup ? [] : d.ids, extra: beatFrames() }), edges, SNAP_PX / pxNow);
         if (s) {
           delta += s.correction;
           at = s.at;
@@ -336,7 +382,7 @@ export function Timeline() {
       const edgePos = d.edge === 'start' ? clips[0]!.start : clipEnd(clips[0]!);
       let at: number | null = null;
       if (ui.snapping) {
-        const s = snapFrame(snapTargets(t, { playhead: getPlayhead(), exclude: d.ids }), edgePos + delta, SNAP_PX / pxNow);
+        const s = snapFrame(snapTargets(t, { playhead: getPlayhead(), exclude: d.ids, extra: beatFrames() }), edgePos + delta, SNAP_PX / pxNow);
         if (s != null) {
           delta = s - edgePos;
           at = s;
@@ -348,6 +394,25 @@ export function Timeline() {
       ui.set({ preview: next, snapAt: at });
       const c = next.clips[d.ids[0]!];
       if (c) setReadout({ x: e.clientX + 14, y: e.clientY + 16, text: `${ripple ? 'Ripple · ' : ''}${formatTimecode(c.duration, fps)}` });
+    } else if (d.kind === 'volume') {
+      const db = yToVolume(volumeToY(d.db0) + (e.clientY - d.startY) / Math.max(1, d.bodyH));
+      ui.set({ preview: updateClips(t, d.ids, { volumeDb: db === 0 ? undefined : db }) });
+      setReadout({ x: e.clientX + 14, y: e.clientY + 16, text: `${db > 0 ? '+' : ''}${db.toFixed(1)} dB` });
+    } else if (d.kind === 'fade') {
+      const clip = t.clips[d.clipId]!;
+      const delta = Math.round(dx / pxNow) * (d.which === 'in' ? 1 : -1);
+      const frames = Math.max(0, Math.min(clip.duration, d.f0 + delta));
+      ui.set({ preview: updateClips(t, [d.clipId], d.which === 'in' ? { fadeIn: frames || undefined } : { fadeOut: frames || undefined }) });
+      setReadout({ x: e.clientX + 14, y: e.clientY + 16, text: `Fade ${d.which} ${(frames / fps).toFixed(2)} s` });
+    } else if (d.kind === 'transition') {
+      const clip = t.clips[d.clipId]!;
+      const current = d.edge === 'in' ? clip.transitionIn : clip.transitionOut;
+      if (!current) return;
+      const { frame } = locate(e.clientX, e.clientY);
+      const twoSided = d.edge === 'in' && !!previousAdjacent(t, clip);
+      const duration = Math.max(2, Math.round(twoSided ? 2 * Math.abs(frame - clip.start) : d.edge === 'in' ? frame - clip.start : clipEnd(clip) - frame));
+      ui.set({ preview: setTransition(t, d.clipId, d.edge, { ...current, duration }) });
+      setReadout({ x: e.clientX + 14, y: e.clientY + 16, text: `${(duration / fps).toFixed(2)} s` });
     } else if (d.kind === 'marquee') {
       const rect = contentRef.current!.getBoundingClientRect();
       const x0 = d.startX - rect.left;
@@ -376,6 +441,11 @@ export function Timeline() {
     setMarquee(null);
     setReadout(null);
     if (!d || !commit) return;
+    if ((d.kind === 'volume' || d.kind === 'fade' || d.kind === 'transition') && d.started && result && result !== d.base) {
+      const label = d.kind === 'volume' ? 'Volume' : d.kind === 'fade' ? (d.which === 'in' ? 'Fade in' : 'Fade out') : 'Transition length';
+      useProject.getState().commitTimeline(label, result);
+      return;
+    }
     if ((d.kind === 'move' || d.kind === 'trim') && d.started && result && result !== d.base) {
       const label = d.kind === 'trim' ? (d.ripple ? 'Ripple trim' : 'Trim') : d.dup ? 'Duplicate' : e?.ctrlKey ? 'Insert move' : 'Move';
       useProject.getState().commitTimeline(label, result);
@@ -405,6 +475,12 @@ export function Timeline() {
 
   // ---------------------------------------------------------------- drag & drop from bin / source / OS
   const onDragOver = (e: React.DragEvent) => {
+    const types = [...e.dataTransfer.types];
+    if (types.includes(TRANSITION_MIME) || types.includes(TITLE_MIME)) {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+      return;
+    }
     const src = activeDrag();
     const files = isOsFileDrag(e);
     if (!src && !files) return;
@@ -432,6 +508,19 @@ export function Timeline() {
     e.stopPropagation();
     const base = getTimeline();
     const { frame, row } = locate(e.clientX, e.clientY);
+    const transitionType = e.dataTransfer.getData(TRANSITION_MIME);
+    if (transitionType) {
+      const clip = row ? clipAt(base, row.track.id, Math.floor(frame)) : undefined;
+      if (!clip) return useUi.getState().toast('Drop a transition onto the start or end of a clip.');
+      dropTransition(clip.id, frame < clip.start + clip.duration / 2 ? 'in' : 'out', transitionType as TransitionType);
+      return;
+    }
+    const presetId = e.dataTransfer.getData(TITLE_MIME);
+    if (presetId) {
+      const preset = TEXT_PRESETS.find((p) => p.id === presetId);
+      if (preset) addPresetTitle(preset, snapOne(base, Math.max(0, frame)).frame, row?.track.kind === 'video' ? row.track.id : undefined);
+      return;
+    }
     const { frame: f } = snapOne(base, Math.max(0, frame));
     const override = overrideFor(base, row);
     const mode = e.ctrlKey ? 'insert' : 'overwrite';
@@ -506,6 +595,7 @@ export function Timeline() {
                 assets={assets}
                 offline={offline}
                 selected={selectedSet}
+                selectedTransition={selection.transition}
                 px={px}
                 viewFrom={viewFrom}
                 viewTo={viewTo}
@@ -525,6 +615,7 @@ export function Timeline() {
                 assets={assets}
                 offline={offline}
                 selected={selectedSet}
+                selectedTransition={selection.transition}
                 px={px}
                 viewFrom={viewFrom}
                 viewTo={viewTo}
@@ -585,6 +676,7 @@ const TrackRow = memo(function TrackRow(props: {
   assets: ReturnType<typeof useAssets.getState>['byPath'];
   offline: Record<string, true>;
   selected: Set<string>;
+  selectedTransition: { clipId: string; edge: 'in' | 'out' } | null;
   px: number;
   viewFrom: number;
   viewTo: number;
@@ -623,12 +715,33 @@ const TrackRow = memo(function TrackRow(props: {
               offline={!!props.offline[c.mediaId]}
               selected={props.selected.has(c.id)}
               linked={isLinked(tl, c)}
+              onMusicTrack={!!track.music}
               px={px}
               fps={tl.settings.fps}
               viewFrom={props.viewFrom}
               viewTo={props.viewTo}
               rowHeight={row.height}
             />
+          );
+        })}
+        {trackTransitions(tl, track.id).map((t) => {
+          const span = transitionSpan(t);
+          if (span.end < props.viewFrom || span.start > props.viewTo) return null;
+          const owner = t.kind === 'cut' ? { clipId: t.b.id, edge: 'in' as const } : { clipId: t.clip.id, edge: t.kind };
+          const sel = props.selectedTransition?.clipId === owner.clipId && props.selectedTransition.edge === owner.edge;
+          const w = (span.end - span.start) * px;
+          return (
+            <div
+              key={`${owner.clipId}|${owner.edge}`}
+              className={`transition-box ${t.kind}${sel ? ' selected' : ''}`}
+              style={{ left: span.start * px, width: Math.max(6, w) }}
+              data-transition={`${owner.clipId}|${owner.edge}`}
+              data-tip={`${TRANSITION_LABELS[t.type]} · ${(t.duration / tl.settings.fps).toFixed(2)} s — drag an edge to change its length, Delete to remove`}
+            >
+              {w > 70 && <span>{TRANSITION_LABELS[t.type]}</span>}
+              <div className="t-edge start" data-tedge="start" />
+              <div className="t-edge end" data-tedge="end" />
+            </div>
           );
         })}
       </div>
@@ -650,6 +763,7 @@ function TimelineToolbar({ tool, snapping, px, onZoom, tl }: { tool: string; sna
       </span>
       <IconButton icon={<MousePointer2 size={16} />} label="Selection tool" kbd="V" active={tool === 'select'} onClick={() => edit.setTool('select')} />
       <IconButton icon={<Scissors size={16} />} label="Razor tool (Shift: all tracks, Alt: one side)" kbd="C" active={tool === 'razor'} onClick={() => edit.setTool('razor')} />
+      <IconButton icon={<Type size={16} />} label="Text tool: click the picture to add a title" kbd="T" active={tool === 'text'} onClick={() => edit.setTool(tool === 'text' ? 'select' : 'text')} />
       <IconButton icon={<Magnet size={16} />} label={snapping ? 'Snapping is on' : 'Snapping is off'} kbd="S" active={snapping} onClick={edit.toggleSnapping} />
       <div className="topbar-sep" />
       <IconButton icon={<span style={{ font: '700 15px var(--mono)' }}>{'{'}</span>} label="Mark In" kbd="I" onClick={() => edit.markTimeline('in')} />
@@ -663,6 +777,10 @@ function TimelineToolbar({ tool, snapping, px, onZoom, tl }: { tool: string; sna
       <IconButton icon={<Bookmark size={16} />} label="Add marker" kbd="M" onClick={edit.addMarkerAtPlayhead} />
       <IconButton icon={<Link size={16} />} label={anyLinked ? 'Unlink audio & video' : 'Link selected clips'} kbd="Ctrl+L" onClick={edit.toggleLinkSelection} disabled={!selection.length} />
       <IconButton icon={<Group size={16} />} label="Group / ungroup selected clips" kbd="Ctrl+G" onClick={edit.toggleGroupSelection} disabled={!selection.length} />
+      <div className="topbar-sep" />
+      <IconButton icon={<Blend size={16} />} label="Cross dissolve at the nearest cut (or selected clips)" kbd="Ctrl+D" onClick={() => applyDefaultTransition('video')} />
+      <IconButton icon={<AudioLines size={16} />} label="Audio crossfade at the nearest cut (or selected clips)" kbd="Shift+Ctrl+D" onClick={() => applyDefaultTransition('audio')} />
+      <IconButton icon={<Music size={16} />} label="Add music: beats get markers and clips snap to them" onClick={() => void addMusicCmd()} testId="add-music" />
       <div className="grow" />
       <span className="tc dim" data-tip="Timeline format (change it in the Inspector when nothing is selected)">
         {width}×{height} · {fps} fps

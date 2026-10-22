@@ -1597,3 +1597,300 @@ input:focus {
   gap: 4px;
   flex: none;
 }
+
+/* ------------------------------------------------------------------ Phase 2 */
+
+/* Bin tabs */
+.panel-header.bin-tabs {
+  padding-left: 4px;
+  gap: 0;
+}
+.bin-tabs > button {
+  height: 31px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--text-3);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 0 9px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.bin-tabs > button:hover {
+  color: var(--text-2);
+}
+.bin-tabs > button.on {
+  color: var(--text);
+  border-bottom-color: var(--accent);
+}
+.bin-tabs .count {
+  font: 10.5px var(--mono);
+  color: var(--text-3);
+}
+
+.transition-list {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.transition-item {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  cursor: grab;
+}
+.transition-item:hover {
+  border-color: var(--line-strong);
+}
+.transition-icon {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  border-radius: 6px;
+  display: grid;
+  place-items: center;
+  background: #0d1220;
+  color: var(--accent-strong);
+}
+.transition-name {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.transition-text {
+  font-size: 11.5px;
+  color: var(--text-3);
+}
+
+/* Title clips */
+.clip.text {
+  background: #1e0f29;
+  border-color: #a35bd6;
+}
+.clip.text .clip-head {
+  background: #5b2b80;
+}
+.clip.text.selected {
+  background: #2c163d;
+  border-color: var(--clip-selected);
+}
+.clip-text-preview {
+  position: absolute;
+  inset: 3px 6px;
+  font-size: 12px;
+  line-height: 1.25;
+  color: #e6c9ff;
+  white-space: pre;
+  overflow: hidden;
+}
+.clip-db {
+  margin-left: auto;
+  flex: none;
+  font: 10px var(--mono);
+  opacity: 0.9;
+}
+
+/* Audio clip handles: volume line, fade handles, fade ramps, beat ticks */
+.clip-fades {
+  position: absolute;
+  left: 0;
+  top: 0;
+  pointer-events: none;
+}
+.clip-fades polygon {
+  fill: rgba(0, 0, 0, 0.55);
+  stroke: rgba(255, 214, 102, 0.8);
+  stroke-width: 1;
+}
+.clip-volume {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 9px;
+  margin-top: -4px;
+  cursor: ns-resize;
+  z-index: 2;
+}
+.clip-volume::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 4px;
+  height: 1px;
+  background: rgba(255, 214, 102, 0.8);
+}
+.clip-volume:hover::before {
+  top: 3.5px;
+  height: 2px;
+  background: #ffd666;
+}
+.fade-handle {
+  position: absolute;
+  top: 0;
+  width: 9px;
+  height: 9px;
+  margin-left: -4px;
+  background: #ffd666;
+  border-radius: 2px;
+  cursor: ew-resize;
+  z-index: 4;
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.fade-handle.out {
+  margin-left: 0;
+  margin-right: -4px;
+}
+.clip:hover .fade-handle,
+.clip.selected .fade-handle {
+  opacity: 1;
+}
+.beat-tick {
+  position: absolute;
+  bottom: 0;
+  width: 1px;
+  height: 7px;
+  background: rgba(255, 255, 255, 0.5);
+  pointer-events: none;
+}
+.beat-tick.bar {
+  width: 2px;
+  height: 14px;
+  background: #ffd666;
+}
+.clip-wave-pending {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  color: var(--text-3);
+}
+
+/* Transitions on the timeline */
+.transition-box {
+  position: absolute;
+  top: 18px;
+  bottom: 4px;
+  z-index: 5;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.24), rgba(255, 255, 255, 0.04));
+  display: grid;
+  place-items: center;
+  font-size: 10.5px;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  cursor: pointer;
+}
+.transition-box.selected {
+  border-color: var(--warn);
+  box-shadow: 0 0 0 1px var(--warn);
+}
+.t-edge {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 6px;
+  cursor: ew-resize;
+}
+.t-edge.start {
+  left: -1px;
+}
+.t-edge.end {
+  right: -1px;
+}
+.track-flag.on.music {
+  background: #10234a;
+  color: var(--accent-strong);
+}
+
+/* Titles in the program monitor */
+.title-overlay {
+  position: absolute;
+  z-index: 3;
+}
+.title-overlay.text-tool {
+  cursor: text;
+}
+.title-box {
+  position: absolute;
+  outline: 1.5px solid var(--accent-strong);
+  outline-offset: 3px;
+  pointer-events: none;
+}
+.title-guide {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--warn);
+  pointer-events: none;
+}
+
+/* Inspector controls */
+.field-control {
+  min-width: 0;
+}
+.slider-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.slider-row input[type='range'],
+.inline-controls input[type='range'] {
+  flex: 1;
+  min-width: 50px;
+  accent-color: var(--accent);
+}
+.slider-value {
+  min-width: 54px;
+  text-align: right;
+  font: 11.5px var(--mono);
+  color: var(--text-2);
+}
+.inline-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.inline-controls .mini {
+  font: 10.5px var(--mono);
+  color: var(--text-3);
+}
+input[type='color'] {
+  width: 30px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 5px;
+  background: #000;
+  cursor: pointer;
+}
+.title-input {
+  width: 100%;
+  min-height: 44px;
+  resize: vertical;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: #000;
+  color: var(--text);
+  font-size: 13px;
+}
+.title-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}

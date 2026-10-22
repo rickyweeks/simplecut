@@ -18,6 +18,8 @@ const MIME: Record<string, string> = {
   '.wav': 'audio/wav',
   '.aac': 'audio/aac',
   '.m4a': 'audio/mp4',
+  '.flac': 'audio/flac',
+  '.ogg': 'audio/ogg',
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
   '.jpeg': 'image/jpeg',

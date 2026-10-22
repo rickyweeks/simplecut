@@ -56,6 +56,8 @@ export interface RunOptions {
   onProgress?: (p: FfmpegProgress) => void;
   /** Raw stdout (e.g. streamed PCM). Mutually exclusive with onProgress. */
   onStdout?: (chunk: Buffer) => void;
+  /** Raw stderr text (e.g. analysis filters that print their results). */
+  onStderr?: (text: string) => void;
   signal?: AbortSignal;
   timeoutMs?: number;
 }
@@ -81,7 +83,9 @@ export function run(binary: string, args: string[], opts: RunOptions = {}): Prom
       else stdout += chunk.toString('utf8');
     });
     child.stderr!.on('data', (chunk: Buffer) => {
-      stderr = (stderr + chunk.toString('utf8')).slice(-16_000);
+      const text = chunk.toString('utf8');
+      opts.onStderr?.(text);
+      stderr = (stderr + text).slice(-16_000);
     });
 
     const onAbort = () => {

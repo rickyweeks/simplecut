@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import {
+  annotateHistory,
   createHistory,
   createProjectDoc,
   currentEntry,
@@ -33,6 +34,8 @@ interface ProjectState {
 
   commit(label: string, doc: ProjectDoc): void;
   commitTimeline(label: string, timeline: Timeline): void;
+  /** Adds derived data (like detected beats) to every undo snapshot, without an undo step. */
+  annotate(fn: (doc: ProjectDoc) => ProjectDoc): void;
   undo(): void;
   redo(): void;
   jump(index: number): void;
@@ -60,6 +63,10 @@ export const useProject = create<ProjectState>((set, get) => ({
     const { doc } = get();
     if (timeline === doc.timeline) return;
     get().commit(label, { ...doc, timeline });
+  },
+  annotate(fn) {
+    const history = annotateHistory(get().history, fn);
+    if (history !== get().history) set({ history, doc: currentState(history) });
   },
   undo() {
     const history = undo(get().history);

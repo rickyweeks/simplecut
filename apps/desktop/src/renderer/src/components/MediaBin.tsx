@@ -8,6 +8,7 @@ import { useProject } from '../state/project';
 import { useSource } from '../state/source';
 import { useUi } from '../state/ui';
 import { IconButton } from './common';
+import { TitlesGrid, TransitionsList } from './Library';
 
 export function osFilePaths(e: React.DragEvent): string[] {
   return [...e.dataTransfer.files].map((f) => api.pathForFile(f)).filter(Boolean);
@@ -19,6 +20,7 @@ export function MediaBin() {
   const media = useProject((s) => s.doc.media);
   const focused = useUi((s) => s.focus === 'bin');
   const [dropping, setDropping] = useState(false);
+  const [tab, setTab] = useState<'media' | 'titles' | 'transitions'>('media');
   const items = Object.values(media);
 
   return (
@@ -44,14 +46,25 @@ export function MediaBin() {
       }}
       data-testid="media-bin"
     >
-      <div className="panel-header">
-        <span className="panel-title">Media</span>
-        <span className="panel-subtitle">{items.length ? `${items.length} item${items.length === 1 ? '' : 's'}` : ''}</span>
+      <div className="panel-header bin-tabs">
+        <button type="button" className={tab === 'media' ? 'on' : ''} onClick={() => setTab('media')} data-testid="tab-media">
+          Media{items.length ? <span className="count">{items.length}</span> : null}
+        </button>
+        <button type="button" className={tab === 'titles' ? 'on' : ''} onClick={() => setTab('titles')} data-testid="tab-titles">
+          Titles
+        </button>
+        <button type="button" className={tab === 'transitions' ? 'on' : ''} onClick={() => setTab('transitions')} data-testid="tab-transitions">
+          Transitions
+        </button>
         <div className="grow" />
         <IconButton icon={<Import size={16} />} label="Import media" kbd="Ctrl+I" onClick={() => void importDialog()} small />
       </div>
       <div className={`panel-body${dropping ? ' drop-target' : ''}`}>
-        {items.length === 0 ? (
+        {tab === 'titles' ? (
+          <TitlesGrid />
+        ) : tab === 'transitions' ? (
+          <TransitionsList />
+        ) : items.length === 0 ? (
           <div className="empty">
             <div>
               <FolderInput className="empty-icon" size={28} />

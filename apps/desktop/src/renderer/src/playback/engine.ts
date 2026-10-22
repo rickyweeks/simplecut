@@ -1,26 +1,39 @@
 import {
+  DEFAULT_DUCK_DB,
   FORMATS,
   audioTracks,
+  audioTransitionGain,
   clipAt,
   clipEnd,
-  clipsOnTrack,
+  clipGainAt,
+  clipPlaySpans,
+  dbToGain,
+  duckGainAt,
   isTrackAudible,
+  textAnimState,
   timelineDuration,
+  trackGain,
+  transitionFrameAt,
   videoTracks,
   type Clip,
+  type DuckRegion,
   type Frame,
   type MediaItem,
+  type TextContent,
   type Timeline,
 } from '@simplecut/core';
 import { getPlayhead, setPlayhead, usePlayhead } from '../state/playhead';
+import type { RenderedText } from '../text/renderText';
 
 /**
  * Program monitor playback: composites every visible video track onto a canvas and mixes
  * every audible audio track through Web Audio, in real time.
  *
  * The composite mirrors the export graph exactly: tracks are drawn bottom-up (V1 first,
- * higher tracks cover lower ones), each clip fitted (letterboxed) into the frame on black,
- * and audio tracks are summed without normalization.
+ * higher tracks cover lower ones), each clip fitted (letterboxed) into the frame on black;
+ * transitions, title animations and every audio gain (clip volume, fades, crossfades,
+ * track volume, music ducking, master gain) come from the same core functions the export
+ * uses, so what you hear and see is what you get.
  *
  * Media elements come from a small pool and are matched to clips each frame, preferring an
  * element already positioned near the needed time, so playing across a razor cut keeps the
@@ -31,8 +44,10 @@ export interface EngineHost {
   /** The timeline to show (a live drag preview if one exists). */
   timeline(): Timeline;
   media(id: string): MediaItem | undefined;
-  /** Playable URL (proxy or original), or null when nothing can be played yet. */
+  /** Playable picture URL (proxy or original), or null when nothing can be played yet. */
   url(media: MediaItem): string | null;
+  /** Playable sound URL for a clip (e.g. its noise-reduced file). */
+  audioUrl(clip: Clip, media: MediaItem): string | null;
   offline(mediaId: string): boolean;
   /** A proxy is being prepared and the original can't be shown. */
   preparing(media: MediaItem): boolean;
@@ -40,6 +55,10 @@ export interface EngineHost {
   scale(): number;
   /** The browser failed to decode this media's original file. */
   unplayable(media: MediaItem, url: string): void;
+  /** A title drawn into a transparent full-frame canvas. */
+  text(text: TextContent, width: number, height: number): RenderedText;
+  /** Where dialogue is (the music track ducks under it). */
+  duckRegions(): DuckRegion[];
 }
 
 type SlotKind = 'video' | 'audio';
@@ -58,6 +77,8 @@ interface Need {
   kind: SlotKind;
   /** On screen / audible now (false = pre-roll for an upcoming clip). */
   active: boolean;
+  /** First frame the clip is needed at (earlier than its start inside a transition). */
+  from: Frame;
 }
 
 const MAX_SLOTS: Record<SlotKind, number> = { video: 8, audio: 8 };
@@ -83,6 +104,8 @@ export class ProgramEngine {
   private anchorTime = 0;
   private playing = false;
   private rate = 0;
+  /** Since when the current frame has been waiting for a decoder (0 = not waiting). */
+  private waitingSince = 0;
 
   constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -193,30 +216,42 @@ export class ProgramEngine {
     if (this.dirty || this.playing || frame !== this.lastFrame) this.draw(tl, frame);
   };
 
+  /** Clips each track needs now (including transition handles) and soon (pre-roll). */
+  private collectNeeds(tl: Timeline, frame: Frame, forward: boolean): Need[] {
+    const fps = tl.settings.fps;
+    const needs: Need[] = [];
+    const horizon = frame + PRELOAD_SEC * fps * Math.max(1, this.rate);
+    const addTrack = (trackId: string, kind: SlotKind) => {
+      const spans = [...clipPlaySpans(tl, trackId).values()];
+      const active = spans.filter((s) => s.from <= frame && frame < s.to);
+      for (const s of active) needs.push({ clip: s.clip, kind, active: true, from: s.from });
+      if (!forward) return;
+      for (const s of spans) {
+        if (s.from <= frame || s.from > horizon) continue;
+        // A clip that simply continues an active one (a razor cut) inherits its element.
+        const continues = active.some(
+          (a) => a.clip.mediaId === s.clip.mediaId && s.clip.start === clipEnd(a.clip) && s.clip.sourceIn === a.clip.sourceIn + a.clip.duration,
+        );
+        if (!continues) needs.push({ clip: s.clip, kind, active: false, from: s.from });
+      }
+    };
+    for (const t of videoTracks(tl)) if (!t.hidden) addTrack(t.id, 'video');
+    for (const t of audioTracks(tl)) if (isTrackAudible(tl, t)) addTrack(t.id, 'audio');
+    return needs.filter((n) => !n.clip.text);
+  }
+
   /** Matches media elements to the clips that are (or are about to be) on screen, and drives them. */
   private sync(tl: Timeline, frame: Frame, exact: number, now: number): void {
     const fps = tl.settings.fps;
     const forward = this.playing && this.rate > 0;
-    const needs: Need[] = [];
-    const addTrack = (trackId: string, kind: SlotKind) => {
-      const current = clipAt(tl, trackId, frame);
-      if (current) needs.push({ clip: current, kind, active: true });
-      if (!forward) return;
-      const horizon = frame + PRELOAD_SEC * fps * this.rate;
-      const next = clipsOnTrack(tl, trackId).find((c) => c.start > frame && c.start <= horizon);
-      // A clip that simply continues the current one (a razor cut) inherits its element.
-      const continues =
-        next && current && next.mediaId === current.mediaId && next.start === clipEnd(current) && next.sourceIn === current.sourceIn + current.duration;
-      if (next && !continues) needs.push({ clip: next, kind, active: false });
-    };
-    for (const t of videoTracks(tl)) if (!t.hidden) addTrack(t.id, 'video');
-    for (const t of audioTracks(tl)) if (isTrackAudible(tl, t)) addTrack(t.id, 'audio');
+    const needs = this.collectNeeds(tl, frame, forward);
 
     const urlFor = (n: Need): string | null => {
       const media = this.host.media(n.clip.mediaId);
       if (!media || media.kind === 'image' || this.host.offline(media.id)) return null;
-      return this.host.url(media);
+      return n.kind === 'audio' ? this.host.audioUrl(n.clip, media) : this.host.url(media);
     };
+    const sourceSec = (clip: Clip, at: number) => Math.max(0, (clip.sourceIn + (at - clip.start)) / fps);
 
     // Keep existing assignments that still fit, then hand out the rest.
     const next = new Map<string, Slot>();
@@ -233,7 +268,7 @@ export class ProgramEngine {
       if (next.has(n.clip.id)) continue;
       const url = urlFor(n);
       if (!url) continue;
-      const target = (n.clip.sourceIn + Math.max(0, frame - n.clip.start)) / fps;
+      const target = sourceSec(n.clip, Math.max(frame, n.from));
       let best: Slot | null = null;
       let bestDist = Infinity;
       for (const s of this.slots) {
@@ -254,6 +289,10 @@ export class ProgramEngine {
 
     for (const s of this.slots) if (!used.has(s) && !s.el.paused) s.el.pause();
 
+    const regions = this.host.duckRegions();
+    const depth = tl.duckDb ?? DEFAULT_DUCK_DB;
+    this.master.gain.setTargetAtTime(dbToGain(tl.masterGainDb ?? 0), this.audio.currentTime, 0.02);
+
     for (const n of needs) {
       const s = next.get(n.clip.id);
       if (!s) continue;
@@ -261,14 +300,21 @@ export class ProgramEngine {
       const { clip } = n;
       const el = s.el;
       if (!n.active) {
-        // Pre-roll: park on the first frame of the upcoming clip.
-        const t = (clip.sourceIn + 0.5) / fps;
+        // Pre-roll: park on the first frame the clip will be needed at.
+        const t = sourceSec(clip, n.from) + 0.5 / fps;
         if (!el.paused) el.pause();
         if (!el.seeking && Math.abs(el.currentTime - t) > 0.5 / fps) el.currentTime = t;
+        if (s.gain) s.gain.gain.value = 0;
         continue;
       }
+      if (s.gain) {
+        const track = tl.tracks.find((t) => t.id === clip.trackId);
+        let g = clipGainAt(clip, exact) * audioTransitionGain(tl, clip, exact) * (track ? trackGain(track) : 1);
+        if (track?.music && depth < 0) g *= duckGainAt(regions, exact / fps, depth);
+        s.gain.gain.setTargetAtTime(g, this.audio.currentTime, 0.01);
+      }
       if (forward) {
-        const target = (clip.sourceIn + (exact - clip.start)) / fps;
+        const target = sourceSec(clip, exact);
         if (el.playbackRate !== this.rate) el.playbackRate = this.rate;
         if (el.paused) {
           if (Math.abs(el.currentTime - target) > 0.08) el.currentTime = target;
@@ -282,7 +328,7 @@ export class ProgramEngine {
       } else {
         // Paused, scrubbing or reverse play: show the exact frame (mid-frame avoids rounding to its neighbour).
         if (!el.paused) el.pause();
-        const t = (clip.sourceIn + (frame - clip.start) + 0.5) / fps;
+        const t = sourceSec(clip, frame) + 0.5 / fps;
         if (!el.seeking && Math.abs(el.currentTime - t) > 0.4 / fps) el.currentTime = t;
       }
     }
@@ -319,6 +365,7 @@ export class ProgramEngine {
     if (kind === 'audio') {
       const source = this.audio.createMediaElementSource(el);
       slot.gain = this.audio.createGain();
+      slot.gain.gain.value = 0;
       source.connect(slot.gain).connect(this.master);
     }
     this.pool.appendChild(el);
@@ -349,48 +396,70 @@ export class ProgramEngine {
     return img;
   }
 
-  /** Since when the current frame has been waiting for a decoder (0 = not waiting). */
-  private waitingSince = 0;
-
   private draw(tl: Timeline, frame: Frame): void {
-    const { width, height } = FORMATS[tl.settings.format];
+    const { width: W, height: H } = FORMATS[tl.settings.format];
     const scale = this.host.scale();
-    const cw = Math.max(2, Math.round(width * scale));
-    const ch = Math.max(2, Math.round(height * scale));
+    const cw = Math.max(2, Math.round(W * scale));
+    const ch = Math.max(2, Math.round(H * scale));
+    const fps = tl.settings.fps;
 
-    // Collect the layers first. If a video is still seeking/decoding, keep showing the
+    // Decide what each track draws. If a video is still seeking/decoding, keep showing the
     // previous picture instead of flashing black (but never wait more than half a second).
-    type Layer = { kind: 'video'; el: HTMLVideoElement } | { kind: 'image'; el: HTMLImageElement } | { kind: 'offline' };
+    type Draw = { clip: Clip; alpha: number; dx: number };
+    type Layer = { draws: Draw[]; color?: { css: string; alpha: number } };
     const layers: Layer[] = [];
     let message: string | null = null;
     let waiting = false;
-    for (const t of videoTracks(tl)) {
-      if (t.hidden) continue;
-      const c = clipAt(tl, t.id, frame);
-      if (!c) continue;
-      const media = this.host.media(c.mediaId);
-      if (!media) continue;
+    const check = (clip: Clip) => {
+      if (clip.text) return;
+      const media = this.host.media(clip.mediaId);
+      if (!media) return;
       if (this.host.offline(media.id)) {
-        layers.push({ kind: 'offline' });
         message = `Media offline: ${media.name}`;
-        continue;
+        return;
       }
       if (media.kind === 'image') {
         const url = this.host.url(media);
         const img = url ? this.image(url) : null;
-        if (img?.complete && img.naturalWidth) layers.push({ kind: 'image', el: img });
-        else if (img && !img.complete) waiting = true;
-        continue;
+        if (img && !img.complete) waiting = true;
+        return;
       }
-      const v = this.assigned.get(c.id)?.el as HTMLVideoElement | undefined;
-      if (v && v.readyState >= 2 && !v.seeking && v.videoWidth) layers.push({ kind: 'video', el: v });
-      else if (!v && this.host.preparing(media)) message = 'Preparing preview…';
-      else if (v && !v.error) waiting = true;
+      const v = this.assigned.get(clip.id)?.el as HTMLVideoElement | undefined;
+      if (!v && this.host.preparing(media)) message = 'Preparing preview…';
+      else if (v && !v.error && (v.readyState < 2 || v.seeking || !v.videoWidth)) waiting = true;
+    };
+    for (const t of videoTracks(tl)) {
+      if (t.hidden) continue;
+      const tf = transitionFrameAt(tl, t.id, frame);
+      if (tf?.mode === 'blend') {
+        layers.push({
+          draws:
+            tf.type === 'dissolve'
+              ? [
+                  { clip: tf.a, alpha: 1, dx: 0 },
+                  { clip: tf.b, alpha: tf.weight, dx: 0 },
+                ]
+              : [
+                  { clip: tf.a, alpha: 1, dx: -tf.weight },
+                  { clip: tf.b, alpha: 1, dx: 1 - tf.weight },
+                ],
+        });
+      } else if (tf?.mode === 'fade') {
+        layers.push(
+          tf.color === 'none'
+            ? { draws: [{ clip: tf.clip, alpha: tf.factor, dx: 0 }] }
+            : { draws: [{ clip: tf.clip, alpha: 1, dx: 0 }], color: { css: tf.color === 'black' ? '#000' : '#fff', alpha: 1 - tf.factor } },
+        );
+      } else {
+        const c = clipAt(tl, t.id, frame);
+        if (c) layers.push({ draws: [{ clip: c, alpha: 1, dx: 0 }] });
+      }
     }
-    const now = performance.now();
+    for (const l of layers) for (const d of l.draws) check(d.clip);
+    const nowMs = performance.now();
     if (waiting) {
-      if (!this.waitingSince) this.waitingSince = now;
-      if (now - this.waitingSince < 500) {
+      if (!this.waitingSince) this.waitingSince = nowMs;
+      if (nowMs - this.waitingSince < 500) {
         this.dirty = true;
         return;
       }
@@ -402,27 +471,65 @@ export class ProgramEngine {
       this.canvas.height = ch;
     }
     const ctx = this.ctx;
+    ctx.globalAlpha = 1;
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, cw, ch);
 
     // Same letterbox fit as the export (scale to fit, centered, never cropped).
-    const fit = (src: CanvasImageSource, sw: number, sh: number) => {
-      if (!sw || !sh) return;
+    const fit = (src: CanvasImageSource, sw: number, sh: number, alpha: number, dx: number) => {
+      if (!sw || !sh || alpha <= 0) return;
       const s = Math.min(cw / sw, ch / sh);
       const dw = sw * s;
       const dh = sh * s;
-      ctx.drawImage(src, (cw - dw) / 2, (ch - dh) / 2, dw, dh);
+      ctx.globalAlpha = alpha;
+      ctx.drawImage(src, (cw - dw) / 2 + dx * cw, (ch - dh) / 2, dw, dh);
+      ctx.globalAlpha = 1;
     };
-    for (const layer of layers) {
-      if (layer.kind === 'offline') {
+    const drawClip = ({ clip, alpha, dx }: Draw) => {
+      if (clip.text) {
+        const r = this.host.text(clip.text, W, H);
+        const st = textAnimState(clip.text, frame - clip.start, clip.duration, fps);
+        const a = alpha * st.alpha;
+        if (a <= 0) return;
+        const ax = clip.text.x * cw;
+        const ay = clip.text.y * ch;
+        ctx.save();
+        ctx.globalAlpha = a;
+        ctx.translate((dx + st.dx) * cw + ax * (1 - st.scale), ay * (1 - st.scale));
+        ctx.scale(st.scale, st.scale);
+        ctx.drawImage(r.canvas, 0, 0, cw, ch);
+        ctx.restore();
+        return;
+      }
+      const media = this.host.media(clip.mediaId);
+      if (!media) return;
+      if (this.host.offline(media.id)) {
         ctx.fillStyle = '#3a0010';
         ctx.fillRect(0, 0, cw, ch);
-      } else if (layer.kind === 'image') fit(layer.el, layer.el.naturalWidth, layer.el.naturalHeight);
-      else fit(layer.el, layer.el.videoWidth, layer.el.videoHeight);
+        return;
+      }
+      if (media.kind === 'image') {
+        const url = this.host.url(media);
+        const img = url ? this.image(url) : null;
+        if (img?.complete && img.naturalWidth) fit(img, img.naturalWidth, img.naturalHeight, alpha, dx);
+        return;
+      }
+      const v = this.assigned.get(clip.id)?.el as HTMLVideoElement | undefined;
+      if (v && v.readyState >= 2 && v.videoWidth) fit(v, v.videoWidth, v.videoHeight, alpha, dx);
+    };
+    for (const layer of layers) {
+      for (const d of layer.draws) drawClip(d);
+      if (layer.color && layer.color.alpha > 0) {
+        // Dips color the whole frame, like the export's full-frame color layer.
+        ctx.globalAlpha = layer.color.alpha;
+        ctx.fillStyle = layer.color.css;
+        ctx.fillRect(0, 0, cw, ch);
+        ctx.globalAlpha = 1;
+      }
     }
 
     if (message) {
-      ctx.font = `${Math.round(22 * scale * (height / 1080))}px "Segoe UI", sans-serif`;
+      ctx.font = `${Math.round(22 * scale * (H / 1080))}px "Segoe UI", sans-serif`;
       ctx.fillStyle = 'rgba(255,255,255,0.75)';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';

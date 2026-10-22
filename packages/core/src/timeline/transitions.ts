@@ -79,6 +79,41 @@ export function transitionSpan(t: ResolvedTransition): { start: Frame; end: Fram
 }
 
 /**
+ * Frames during which each clip on a track must play: its own range, extended into the
+ * neighbour's side of overlapping transitions (dissolve, slide, crossfade). [from, to).
+ */
+export function clipPlaySpans(tl: Timeline, trackId: Id): Map<Id, { clip: Clip; from: Frame; to: Frame }> {
+  const spans = new Map<Id, { clip: Clip; from: Frame; to: Frame }>();
+  for (const c of clipsOnTrack(tl, trackId)) spans.set(c.id, { clip: c, from: c.start, to: clipEnd(c) });
+  for (const t of trackTransitions(tl, trackId)) {
+    if (t.kind !== 'cut' || !isOverlapping(t.type)) continue;
+    spans.get(t.a.id)!.to = t.cut + t.h1;
+    spans.get(t.b.id)!.from = t.cut - t.h2;
+  }
+  return spans;
+}
+
+/** Crossfade weight of an audio clip at a frame (1 outside any crossfade or fade). */
+export function audioTransitionGain(tl: Timeline, clip: Clip, frame: number): number {
+  let g = 1;
+  for (const t of trackTransitions(tl, clip.trackId)) {
+    const span = transitionSpan(t);
+    if (frame < span.start || frame >= span.end) continue;
+    if (t.kind === 'cut') {
+      if (t.type !== 'crossfade') continue;
+      const w = (frame - span.start) / t.duration;
+      if (t.a.id === clip.id) g *= Math.cos((w * Math.PI) / 2);
+      if (t.b.id === clip.id) g *= Math.sin((w * Math.PI) / 2);
+    } else if (t.clip.id === clip.id && t.type === 'crossfade') {
+      // A crossfade with nothing on the other side is a plain (linear) fade.
+      const local = frame - span.start;
+      g *= t.kind === 'in' ? Math.max(0, Math.min(1, local / t.duration)) : Math.max(0, Math.min(1, 1 - local / t.duration));
+    }
+  }
+  return g;
+}
+
+/**
  * How a frame on a track should be drawn when a transition is involved.
  *  - 'blend': draw A, then B on top with `weight` (dissolve), or push-slide by `weight`.
  *  - 'fade': draw `clip`, then overlay `color` with opacity 1 − factor (dips; 'none' = transparent).

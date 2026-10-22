@@ -22,6 +22,7 @@ import {
   rippleTrimToPlayhead,
   setInPoint,
   setOutPoint,
+  setTransition,
   timelineDuration,
   toggleGroup,
   toggleLink,
@@ -171,6 +172,11 @@ export function deleteSelection(forceGap = false): void {
   }
   if (selection.markerId) {
     commit('Delete marker', removeMarker(tl, selection.markerId));
+    return;
+  }
+  if (selection.transition) {
+    commit('Remove transition', setTransition(tl, selection.transition.clipId, selection.transition.edge, null));
+    ui().select({});
     return;
   }
   if (selection.gap) {
@@ -328,4 +334,34 @@ export function redoCmd(): void {
   pruneSelection();
   const entry = useProject.getState().history.entries[useProject.getState().history.index];
   if (entry) toast(`Redo: ${entry.label}`);
+}
+
+// ---------------------------------------------------------------------------
+// Live edits (sliders, color pickers, typing): preview immediately, commit once idle
+// ---------------------------------------------------------------------------
+
+let pendingEdit: { label: string; build: (tl: Timeline) => Timeline } | null = null;
+let pendingTimer: ReturnType<typeof setTimeout> | null = null;
+
+/**
+ * Shows the result of `build` right away (picture and sound) and records it as one undo step
+ * after a short pause, instead of one step per slider tick or keystroke. `build` must apply
+ * absolute values so it can be re-run on the latest timeline.
+ */
+export function liveEdit(label: string, build: (tl: Timeline) => Timeline): void {
+  pendingEdit = { label, build };
+  ui().set({ preview: build(getTimeline()) });
+  if (pendingTimer) clearTimeout(pendingTimer);
+  pendingTimer = setTimeout(flushLiveEdit, 600);
+}
+
+export function flushLiveEdit(): void {
+  if (pendingTimer) clearTimeout(pendingTimer);
+  pendingTimer = null;
+  const p = pendingEdit;
+  if (!p) return;
+  pendingEdit = null;
+  const next = p.build(getTimeline());
+  ui().set({ preview: null });
+  commit(p.label, next);
 }

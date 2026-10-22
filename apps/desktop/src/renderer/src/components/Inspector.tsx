@@ -26,6 +26,7 @@ import { getTimeline, useProject } from '../state/project';
 import { useSource } from '../state/source';
 import { useUi } from '../state/ui';
 import { IconButton, formatBytes } from './common';
+import { AudioClipSection, MixSection, MusicSection, TitleSection, TransitionSection } from './InspectorSections';
 import { MARKER_HEX } from './timeline/Ruler';
 
 export function Inspector() {
@@ -60,10 +61,13 @@ export function Inspector() {
 
 function Properties() {
   const selection = useUi((s) => s.selection);
-  const tl = useProject((s) => s.doc.timeline);
+  // Show live values while a slider is being dragged (the preview), else the committed ones.
+  const committed = useProject((s) => s.doc.timeline);
+  const tl = useUi((s) => s.preview) ?? committed;
   const media = useProject((s) => s.doc.media);
   const marker = selection.markerId ? tl.markers.find((m) => m.id === selection.markerId) : undefined;
   if (marker) return <MarkerProps tl={tl} markerId={marker.id} />;
+  if (selection.transition) return <TransitionSection tl={tl} clipId={selection.transition.clipId} edge={selection.transition.edge} />;
   if (selection.gap) {
     const g = selection.gap;
     return (
@@ -141,6 +145,7 @@ function TimelineProps({ tl }: { tl: Timeline }) {
         <Field label="Length" value={formatTimecode(timelineDuration(tl), fps)} mono />
         {!tl.settings.locked && <div className="hint">The format and frame rate will match the first video you add. You can change them any time.</div>}
       </div>
+      <MixSection tl={tl} />
       <div className="section">
         <h4>Black frames</h4>
         {gaps.length === 0 ? (
@@ -185,17 +190,26 @@ function ClipProps({ tl, media, ids }: { tl: Timeline; media: Record<string, Med
   if (clips.length > 1) {
     const start = Math.min(...clips.map((c) => c.start));
     const end = Math.max(...clips.map(clipEnd));
+    const audio = clips.filter((x) => x.kind === 'audio');
     return (
+      <>
+      {audio.length > 0 && <AudioClipSection tl={tl} clips={audio} media={media[audio[0]!.mediaId]} />}
       <div className="section">
         <h4>{clips.length} clips selected</h4>
         <Field label="Span" value={`${formatTimecode(start, fps)} – ${formatTimecode(end, fps)}`} mono />
         <ClipActions linked={clips.some((c) => isLinked(tl, c))} />
       </div>
+      </>
     );
   }
   const c = clips[0]!;
   const m = media[c.mediaId];
+  if (c.text) return <TitleSection clip={c} fps={fps} />;
+  const onMusic = tl.tracks.find((t) => t.id === c.trackId)?.music;
   return (
+    <>
+    {c.kind === 'audio' && <AudioClipSection tl={tl} clips={[c]} media={m} />}
+    {onMusic && <MusicSection media={m} />}
     <div className="section">
       <h4>{c.kind === 'video' ? 'Video clip' : 'Audio clip'}</h4>
       <Field label="Media" value={m?.name ?? 'Missing'} />
@@ -209,8 +223,9 @@ function ClipProps({ tl, media, ids }: { tl: Timeline; media: Record<string, Med
         useSource.getState().load(c.mediaId);
         useSource.getState().set({ inSec: c.sourceIn / fps, outSec: (c.sourceIn + c.duration) / fps, timeSec: c.sourceIn / fps });
       }} path={m?.path} />
-      <div className="hint">Transform, speed, volume and color controls arrive in later phases.</div>
+      <div className="hint">{c.kind === 'video' ? 'Transitions: Ctrl+D at a cut, or drag one from the Transitions tab. Transform, speed and color arrive in Phase 3.' : 'Crossfade into the next clip with Shift+Ctrl+D.'}</div>
     </div>
+    </>
   );
 }
 

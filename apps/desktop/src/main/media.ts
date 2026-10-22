@@ -4,6 +4,9 @@ import { join } from 'node:path';
 import { BrowserWindow, app } from 'electron';
 import {
   PeakAccumulator,
+  beatAnalysisArgs,
+  denoiseArgs,
+  denoiseStep,
   expectedThumbnailCount,
   ffprobeArgs,
   needsProxy,
@@ -13,10 +16,12 @@ import {
   thumbnailArgs,
   thumbnailPlan,
   waveformArgs,
+  type BeatAnalysis,
   type MediaInfo,
   type MediaProber,
 } from '@simplecut/core';
 import { IPC, type AssetEvent, type ThumbnailMeta } from '../shared/api';
+import createBeatWorker from './beatWorker?nodeWorker';
 import { encoderDetector } from './encoders';
 import { runFfmpeg, runFfprobe } from './ffmpeg';
 
@@ -179,6 +184,80 @@ async function makeProxy(path: string, dir: string, info: MediaInfo, emit: (e: P
   }
   await fs.rename(tmp, out);
   return { output: out };
+}
+
+// ---------------------------------------------------------------------------
+// Beats (for the music track) and noise reduction, both cached per file.
+// ---------------------------------------------------------------------------
+
+const beatJobs = new Map<string, Promise<BeatAnalysis>>();
+
+/** Decodes the audio at 11 kHz mono and runs beat detection in a worker thread. */
+export function analyzeBeatsFor(path: string): Promise<BeatAnalysis> {
+  let job = beatJobs.get(path);
+  if (job) return job;
+  job = (async () => {
+    const dir = await cacheDirFor(path);
+    const cached = join(dir, 'beats.json');
+    if (await exists(cached)) return JSON.parse(await fs.readFile(cached, 'utf8')) as BeatAnalysis;
+    const chunks: Buffer[] = [];
+    await runFfmpeg(beatAnalysisArgs(path), { onStdout: (c) => chunks.push(c) });
+    const buf = Buffer.concat(chunks);
+    const samples = new Float32Array(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.length - (buf.length % 4)));
+    const result = await new Promise<BeatAnalysis>((resolve, reject) => {
+      const worker = createBeatWorker({ workerData: { samples }, transferList: [samples.buffer as ArrayBuffer] });
+      worker.once('message', resolve);
+      worker.once('error', reject);
+      worker.once('exit', (code) => code !== 0 && reject(new Error(`Beat analysis stopped (code ${code}).`)));
+    });
+    await fs.writeFile(cached, JSON.stringify(result));
+    return result;
+  })().finally(() => beatJobs.delete(path));
+  beatJobs.set(path, job);
+  return job;
+}
+
+const denoiseJobs = new Map<string, Promise<string>>();
+
+/**
+ * The file's audio with background noise reduced at a given strength. The preview plays
+ * this file and the export reads it, so both sound the same.
+ */
+export function denoisedAudio(path: string, info: MediaInfo, strength: number): Promise<string> {
+  const step = denoiseStep(strength);
+  const key = `${path}|${step}`;
+  let job = denoiseJobs.get(key);
+  if (job) return job;
+  const variant = String(step);
+  const emit = (e: Partial<AssetEvent>) => broadcast({ path, kind: 'denoise', variant, state: 'running', ...e });
+  job = (async () => {
+    const dir = await cacheDirFor(path);
+    const out = join(dir, `denoise-${Math.round(step * 10)}.flac`);
+    if (await exists(out)) {
+      emit({ state: 'ready', progress: 1, output: out });
+      return out;
+    }
+    const tmp = join(dir, `denoise-${Math.round(step * 10)}.part.flac`);
+    emit({ state: 'running', progress: 0 });
+    let last = 0;
+    try {
+      await runFfmpeg(denoiseArgs(path, tmp, step), {
+        onProgress: (p) => {
+          if (Date.now() - last < 250 || !(info.durationSec > 0)) return;
+          last = Date.now();
+          emit({ progress: Math.min(0.99, p.outTimeSec / info.durationSec) });
+        },
+      });
+      await fs.rename(tmp, out);
+    } catch (err) {
+      emit({ state: 'failed', error: err instanceof Error ? err.message : String(err) });
+      throw err;
+    }
+    emit({ state: 'ready', progress: 1, output: out });
+    return out;
+  })().finally(() => denoiseJobs.delete(key));
+  denoiseJobs.set(key, job);
+  return job;
 }
 
 /** Starts (or reuses cached) background work for one media file. */

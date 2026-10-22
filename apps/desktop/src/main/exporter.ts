@@ -1,10 +1,36 @@
 import { existsSync, promises as fs } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join } from 'node:path';
-import { buildExportPlan, overallProgress, type VideoEncoderId } from '@simplecut/core';
-import type { ExportProgressEvent, ExportResult, ExportStartRequest } from '../shared/api';
+import {
+  buildExportPlan,
+  buildLoudnessJob,
+  denoiseStep,
+  overallProgress,
+  parseLoudnorm,
+  type Clip,
+  type MediaItem,
+  type ProjectDoc,
+  type VideoEncoderId,
+} from '@simplecut/core';
+import type { ExportProgressEvent, ExportResult, ExportStartRequest, LoudnessRequest } from '../shared/api';
 import { encoderDetector } from './encoders';
 import { CancelledError, FfmpegError, runFfmpeg } from './ffmpeg';
+import { denoisedAudio } from './media';
+
+/**
+ * Makes sure every noise-reduced audio file the edit needs exists, and returns a function
+ * that maps a clip to the audio file to read (the cleaned file, or the original).
+ */
+async function audioSources(doc: ProjectDoc): Promise<(clip: Clip, media: MediaItem) => string> {
+  const paths = new Map<string, string>();
+  for (const c of Object.values(doc.timeline.clips)) {
+    const m = doc.media[c.mediaId];
+    if (!m || !c.denoise || c.kind !== 'audio') continue;
+    const key = `${m.id}|${denoiseStep(c.denoise)}`;
+    if (!paths.has(key)) paths.set(key, await denoisedAudio(m.path, m, c.denoise));
+  }
+  return (clip, media) => (clip.denoise ? (paths.get(`${media.id}|${denoiseStep(clip.denoise)}`) ?? media.path) : media.path);
+}
 
 let current: AbortController | null = null;
 
@@ -35,6 +61,12 @@ export async function startExport(req: ExportStartRequest, send: (e: ExportProgr
   }
 
   const tempDir = await fs.mkdtemp(join(tmpdir(), 'scut-export-'));
+  const textImages: Record<string, string> = {};
+  for (const [clipId, png] of Object.entries(req.textImages ?? {})) {
+    const file = join(tempDir, `title-${clipId.replace(/[^w-]/g, '_')}.png`);
+    await fs.writeFile(file, png);
+    textImages[clipId] = file;
+  }
   const partial = join(dirname(req.outputPath), `.${basename(req.outputPath, extname(req.outputPath))}.simplecut-partial.mp4`);
   const hw = await encoderDetector.detect();
   const encoders: VideoEncoderId[] = req.encoder === 'software' || hw.length === 0 ? ['libx264'] : [hw[0]!, 'libx264'];
@@ -51,7 +83,21 @@ export async function startExport(req: ExportStartRequest, send: (e: ExportProgr
       const encoder = encoders[i]!;
       try {
         const hwDecode = gpuDecode && encoder !== 'libx264';
-        const plan = buildExportPlan({ doc: req.doc, range: req.range, outputPath: partial, encoder, tempDir, hwDecode });
+        if (Object.values(req.doc.timeline.clips).some((c) => c.denoise)) {
+          send({ fraction: 0, label: 'Reducing background noise', etaSec: null, bytesWritten: 0, encoder });
+        }
+        const audioPathFor = await audioSources(req.doc);
+        const plan = buildExportPlan({
+          doc: req.doc,
+          range: req.range,
+          outputPath: partial,
+          encoder,
+          tempDir,
+          hwDecode,
+          audioPathFor,
+          textImages,
+          duckRegions: req.duckRegions,
+        });
         for (const f of plan.files) await fs.writeFile(f.path, f.content, 'utf8');
         const durations = plan.jobs.map((j) => j.durationSec);
         send({ fraction: 0, label: plan.jobs[0]!.label, etaSec: null, bytesWritten: 0, encoder });
@@ -85,5 +131,25 @@ export async function startExport(req: ExportStartRequest, send: (e: ExportProgr
     current = null;
     await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
     await fs.rm(partial, { force: true }).catch(() => {});
+  }
+}
+
+/** Measures the mix's integrated loudness and true peak (before master gain). */
+export async function measureLoudness(req: LoudnessRequest): Promise<{ integratedLufs: number; truePeakDb: number } | null> {
+  const tempDir = await fs.mkdtemp(join(tmpdir(), 'scut-loudness-'));
+  try {
+    const audioPathFor = await audioSources(req.doc);
+    const { job, files } = buildLoudnessJob({ doc: req.doc, range: req.range, tempDir, audioPathFor, duckRegions: req.duckRegions });
+    for (const f of files) await fs.writeFile(f.path, f.content, 'utf8');
+    let stderr = '';
+    await runFfmpeg(job.args, {
+      onProgress: () => {},
+      onStderr: (t) => {
+        stderr = (stderr + t).slice(-20_000);
+      },
+    });
+    return parseLoudnorm(stderr);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true }).catch(() => {});
   }
 }

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { needsProxy, type MediaItem } from '@simplecut/core';
+import { denoiseStep, needsProxy, type Clip, type MediaItem } from '@simplecut/core';
 import type { AssetEvent, ThumbnailMeta } from '../../../shared/api';
 import { api } from '../lib/api';
 
@@ -14,6 +14,8 @@ export interface MediaAssets {
   proxy?: { state: AssetEvent['state']; progress: number; path?: string; error?: string };
   /** The original file failed to play in the preview engine, so a proxy is required. */
   originalUnplayable?: boolean;
+  /** Noise-reduced audio per strength step ("0.4" → file). */
+  denoise?: Record<string, { state: AssetEvent['state']; progress: number; path?: string }>;
 }
 
 interface AssetsState {
@@ -55,6 +57,11 @@ export function startAssetListener(): void {
         .then((buf) => useAssets.getState().patch(e.path, { waveform: new Uint8Array(buf) }))
         .catch(() => {});
     }
+    if (e.kind === 'denoise' && e.variant) {
+      const prev = useAssets.getState().byPath[e.path]?.denoise ?? {};
+      const before = prev[e.variant];
+      patch(e.path, { denoise: { ...prev, [e.variant]: { state: e.state, progress: e.progress ?? before?.progress ?? 0, path: e.output ?? before?.path } } });
+    }
     if (e.kind === 'proxy') {
       const prev = useAssets.getState().byPath[e.path]?.proxy;
       patch(e.path, { proxy: { state: e.state, progress: e.progress ?? prev?.progress ?? 0, path: e.output ?? prev?.path, error: e.error } });
@@ -89,4 +96,24 @@ export function reportUnplayable(media: MediaItem): void {
   if (a?.originalUnplayable || a?.proxy?.state === 'ready') return;
   useAssets.getState().patch(media.path, { originalUnplayable: true });
   prepareAssets(media, true);
+}
+
+const denoiseRequested = new Set<string>();
+
+/**
+ * Audio URL for a clip: its noise-reduced file when noise reduction is on and that file is
+ * ready (asking the main process to make it otherwise), else the normal playable file.
+ */
+export function audioUrlFor(clip: Clip, media: MediaItem, assets: MediaAssets | undefined): string | null {
+  if (clip.denoise && clip.denoise > 0) {
+    const step = String(denoiseStep(clip.denoise));
+    const entry = assets?.denoise?.[step];
+    if (entry?.state === 'ready' && entry.path) return api.mediaUrl(entry.path);
+    const key = `${media.path}|${step}`;
+    if (!denoiseRequested.has(key)) {
+      denoiseRequested.add(key);
+      void api.media.denoise(media.path, media, clip.denoise).catch(() => denoiseRequested.delete(key));
+    }
+  }
+  return playableUrl(media, assets);
 }

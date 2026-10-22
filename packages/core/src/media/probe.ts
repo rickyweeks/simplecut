@@ -1,7 +1,7 @@
 import type { MediaInfo, MediaKind } from '../types';
 import { extname } from '../project/paths';
 
-export const IMPORT_EXTENSIONS = ['.mp4', '.mov', '.mkv', '.webm', '.mp3', '.wav', '.aac', '.m4a', '.png', '.jpg', '.jpeg'];
+export const IMPORT_EXTENSIONS = ['.mp4', '.mov', '.mkv', '.webm', '.mp3', '.wav', '.aac', '.m4a', '.flac', '.ogg', '.png', '.jpg', '.jpeg'];
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg']);
 const IMAGE_FORMATS = new Set(['image2', 'png_pipe', 'jpeg_pipe', 'webp_pipe', 'bmp_pipe']);
 

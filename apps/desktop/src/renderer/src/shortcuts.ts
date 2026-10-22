@@ -1,4 +1,6 @@
+import { applyDefaultTransition } from './actions/audio';
 import * as edit from './actions/edit';
+import { goToBeat } from './actions/music';
 import * as project from './actions/project';
 import { programEngine } from './playback/engine';
 import { sourcePlayer } from './playback/source';
@@ -14,6 +16,7 @@ export const SHORTCUT_GROUPS: { title: string; items: [string, string[]][] }[] =
       ['Step one frame', ['←', '→']],
       ['Step five frames', ['Shift+←', 'Shift+→']],
       ['Previous / next edit point', ['↑', '↓']],
+      ['Previous / next beat of the music', ['Shift+↑', 'Shift+↓']],
       ['Go to start / end', ['Home', 'End']],
     ],
   },
@@ -37,6 +40,8 @@ export const SHORTCUT_GROUPS: { title: string; items: [string, string[]][] }[] =
       ['Ripple trim clip end to playhead', ['W']],
       ['Ripple delete (default)', ['Delete', 'Backspace']],
       ['Delete, leaving a gap', ['Shift+Delete']],
+      ['Cross dissolve (default video transition)', ['Ctrl+D']],
+      ['Audio crossfade', ['Shift+Ctrl+D']],
     ],
   },
   {
@@ -44,6 +49,7 @@ export const SHORTCUT_GROUPS: { title: string; items: [string, string[]][] }[] =
     items: [
       ['Selection tool', ['V']],
       ['Razor tool', ['C']],
+      ['Text tool (click the picture to add a title)', ['T']],
       ['Select only video or audio of a linked clip', ['Alt+click']],
       ['Duplicate clip', ['Alt+drag']],
       ['Insert-move (push clips aside)', ['Ctrl+drag']],
@@ -151,7 +157,7 @@ export function handleKeyDown(e: KeyboardEvent): void {
         edit.selectAll();
         break;
       case 'd':
-        ui.toast(shift ? 'Audio crossfades (Shift+Ctrl+D) arrive in Phase 2.' : 'Transitions (Ctrl+D) arrive in Phase 2.');
+        applyDefaultTransition(shift ? 'audio' : 'video');
         break;
       case 'm':
         ui.set({ dialog: 'export' });
@@ -193,10 +199,12 @@ export function handleKeyDown(e: KeyboardEvent): void {
         m.step(shift ? 5 : 1);
         break;
       case 'ArrowUp':
-        edit.goToEdit(-1);
+        if (shift) goToBeat(-1);
+        else edit.goToEdit(-1);
         break;
       case 'ArrowDown':
-        edit.goToEdit(1);
+        if (shift) goToBeat(1);
+        else edit.goToEdit(1);
         break;
       case 'Home':
         if (m.kind === 'source') sourcePlayer.seekFrame(0);
@@ -231,6 +239,9 @@ export function handleKeyDown(e: KeyboardEvent): void {
         break;
       case 'c':
         edit.setTool('razor');
+        break;
+      case 't':
+        edit.setTool('text');
         break;
       case 'q':
         edit.rippleTrimToPlayheadCmd('start');

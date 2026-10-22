@@ -13,7 +13,10 @@ import {
   type Range,
 } from '@simplecut/core';
 import type { EncoderInfo, ExportProgressEvent, ExportResult, RecoveryEntry } from '../../../shared/api';
+import { flushLiveEdit } from '../actions/edit';
 import { recoverProject, relinkMedia } from '../actions/project';
+import { duckRegionsFor } from '../state/ducking';
+import { textPng } from '../text/renderText';
 import { api } from '../lib/api';
 import { SHORTCUT_GROUPS } from '../shortcuts';
 import { useAssets } from '../state/assets';
@@ -65,9 +68,17 @@ export function ExportDialog() {
   const start = async () => {
     const out = output ?? (await choose());
     if (!out) return;
+    flushLiveEdit();
     setPhase('running');
     setProgress(null);
-    const r = await api.exporter.start({ doc: getDoc(), range, outputPath: out, encoder: encoderPref });
+    const doc = getDoc();
+    // Titles are drawn by the same renderer the preview uses, so they export pixel-identical.
+    const { width: W, height: H } = FORMATS[doc.timeline.settings.format];
+    const textImages: Record<string, Uint8Array> = {};
+    for (const c of Object.values(doc.timeline.clips)) {
+      if (c.text && c.start < range.end && c.start + c.duration > range.start) textImages[c.id] = await textPng(c.text, W, H);
+    }
+    const r = await api.exporter.start({ doc, range, outputPath: out, encoder: encoderPref, textImages, duckRegions: duckRegionsFor(doc.timeline) });
     setResult(r);
     setPhase(r.ok ? 'done' : r.cancelled ? 'setup' : 'error');
     if (r.cancelled) useUi.getState().toast('Export cancelled.');
@@ -107,6 +118,10 @@ export function ExportDialog() {
             <span>{formatTimecode(range.end - range.start, fps)}</span>
             <span>Estimated size</span>
             <span>{formatBytes(estimate)}</span>
+            <span>Loudness</span>
+            <span data-tip={tl.masterGainDb == null ? 'Inspector → Sound → Normalize for YouTube' : undefined}>
+              {tl.masterGainDb != null && tl.loudness ? `Normalized (~${(tl.loudness.integratedLufs + tl.masterGainDb).toFixed(1)} LUFS)` : 'Not normalized (optional: Inspector → Sound)'}
+            </span>
           </div>
           <div className="field" style={{ padding: '4px 0', gridTemplateColumns: '120px 1fr' }}>
             <label>Range</label>

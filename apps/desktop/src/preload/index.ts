@@ -40,6 +40,8 @@ const api: ScutApi = {
     probe: (path) => ipcRenderer.invoke(IPC.mediaProbe, path),
     prepare: (path, info, opts) => ipcRenderer.invoke(IPC.mediaPrepare, path, info, opts),
     onAsset: (listener) => listen(IPC.mediaAsset, listener),
+    analyzeBeats: (path) => ipcRenderer.invoke(IPC.mediaBeats, path),
+    denoise: (path, info, strength) => ipcRenderer.invoke(IPC.mediaDenoise, path, info, strength),
   },
 
   exporter: {
@@ -47,6 +49,7 @@ const api: ScutApi = {
     start: (req) => ipcRenderer.invoke(IPC.exportStart, req),
     cancel: () => ipcRenderer.invoke(IPC.exportCancel),
     onProgress: (listener) => listen(IPC.exportProgress, listener),
+    measureLoudness: (req) => ipcRenderer.invoke(IPC.exportLoudness, req),
   },
 
   shell: {
