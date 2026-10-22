@@ -1,6 +1,6 @@
 import type { IdGen } from '../ids';
 import type { Clip, Frame, Id, Timeline } from '../types';
-import { clipAt, clipEnd, clipsInRange, clipsOnTrack, isTrackLocked } from './query';
+import { clipAt, clipEnd, clipsInRange, clipsOnTrack, isTrackLocked, sourceSpan, tidy } from './query';
 
 /**
  * During one operation, right-hand pieces of split clips get fresh link/group ids so the
@@ -59,7 +59,7 @@ export function splitClip(clip: Clip, frame: Frame, ids: IdGen, links: IdRemap):
   const left = stripEdge({ ...clip, duration: leftDuration }, 'out');
   const right = stripEdge(
     withIds(
-      { ...clip, id: ids(), start: frame, duration: clip.duration - leftDuration, sourceIn: clip.sourceIn + leftDuration },
+      { ...clip, id: ids(), start: frame, duration: clip.duration - leftDuration, sourceIn: tidy(clip.sourceIn + sourceSpan(clip, leftDuration)) },
       links.get(clip.linkId),
       clip.groupId,
     ),
@@ -107,7 +107,7 @@ export function clearRange(
         updates.push(
           stripEdge(
             withIds(
-              { ...c, id: ids(), start: end, duration: cEnd - end, sourceIn: c.sourceIn + (end - c.start) },
+              { ...c, id: ids(), start: end, duration: cEnd - end, sourceIn: tidy(c.sourceIn + sourceSpan(c, end - c.start)) },
               links.get(c.linkId),
               c.groupId,
             ),
@@ -117,7 +117,7 @@ export function clearRange(
       } else if (c.start < start) {
         updates.push(stripEdge({ ...c, duration: start - c.start }, 'out'));
       } else {
-        updates.push(stripEdge({ ...c, start: end, duration: cEnd - end, sourceIn: c.sourceIn + (end - c.start) }, 'in'));
+        updates.push(stripEdge({ ...c, start: end, duration: cEnd - end, sourceIn: tidy(c.sourceIn + sourceSpan(c, end - c.start)) }, 'in'));
       }
     }
   }

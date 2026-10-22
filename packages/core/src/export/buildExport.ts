@@ -1,7 +1,9 @@
 import { DEFAULT_DUCK_DB, duckVolumeFilters, effectiveFades, type DuckRegion } from '../audio/mix';
+import { bakeLut, cubeText, isNeutralGrade, type CubeLut } from '../color/grade';
 import { joinPath } from '../project/paths';
 import { textAnimationFilters } from '../text/text';
-import { audioTracks, clipEnd, clipsOnTrack, editPoints, getTrack, isTrackAudible, videoTracks } from '../timeline/query';
+import { audioTracks, clipEnd, clipSpeed, clipsOnTrack, editPoints, getTrack, isTrackAudible, sourceSpan, videoTracks } from '../timeline/query';
+import { hasZoom, isIdentityTransform, mediaPictureSize, pictureGeometry, transformOf } from '../timeline/transform';
 import { isOverlapping, trackTransitions, transitionSpan } from '../timeline/transitions';
 import { FORMATS, type Clip, type Frame, type Id, type MediaItem, type ProjectDoc, type Range, type Timeline } from '../types';
 import { YOUTUBE_AUDIO_BITRATE, exportVideoArgs, youtubeBitrate, type BitrateSpec, type VideoEncoderId } from './encoders';
@@ -47,6 +49,37 @@ export interface ExportRequest {
   textImages?: Record<Id, string>;
   /** Where dialogue is (timeline seconds); the music track ducks under it. */
   duckRegions?: DuckRegion[];
+  /** Output size when it differs from the timeline format (export presets; same aspect). */
+  output?: { width: number; height: number };
+  /** Export sound only. */
+  audioOnly?: 'mp3' | 'wav';
+  /**
+   * Rounded-corner masks (grayscale, white = visible) and borders (RGBA) per clip, rendered
+   * by the app at the clip's picture size (see pictureGeometry).
+   */
+  clipImages?: Record<Id, { mask?: string; ring?: string }>;
+  /** Imported .cube LUTs used by color grades, by file path. */
+  inputLuts?: Record<string, CubeLut>;
+}
+
+/** The picture size the graph renders at. */
+export function outputSize(req: Pick<ExportRequest, 'doc' | 'output'>): { width: number; height: number } {
+  return req.output ?? FORMATS[req.doc.timeline.settings.format];
+}
+
+/** FFmpeg filter option values are quoted; ':' and '\\' inside them need escaping. */
+const filterPath = (path: string) => `'${path.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'")}'`;
+
+/** atempo handles 0.5..100 per instance; slower speeds chain several. */
+function atempo(speed: number): string[] {
+  const out: string[] = [];
+  let s = speed;
+  while (s < 0.5) {
+    out.push('atempo=0.5');
+    s /= 0.5;
+  }
+  if (Math.abs(s - 1) > 1e-6) out.push(`atempo=${s.toFixed(6)}`);
+  return out;
 }
 
 export interface FfmpegJob {
@@ -186,11 +219,11 @@ interface Graph {
   filter: string;
 }
 
-function buildGraph(req: ExportRequest, range: Range, opts: { video: boolean; masterGain: boolean }): Graph {
+function buildGraph(req: ExportRequest, range: Range, opts: { video: boolean; audio?: boolean; masterGain: boolean; files?: { path: string; content: string }[] }): Graph {
   const { doc } = req;
   const tl = doc.timeline;
   const fps = tl.settings.fps;
-  const { width: W, height: H } = FORMATS[tl.settings.format];
+  const { width: W, height: H } = outputSize(req);
   const frames = range.end - range.start;
   const totalSamples = samplesAt(range.end, fps) - samplesAt(range.start, fps);
   const resolve = req.resolvePath ?? ((m: MediaItem) => m.path);
@@ -203,17 +236,20 @@ function buildGraph(req: ExportRequest, range: Range, opts: { video: boolean; ma
   const inputFor = (seg: Segment, stream: 'v' | 'a'): { index: number; padStart: Frame } => {
     const clip = seg.clip!;
     const media = doc.media[clip.mediaId]!;
-    const wanted = clip.sourceIn + (seg.start - clip.start) - seg.before;
+    // Source positions are in timeline-rate frames; at speed s each timeline frame uses s of them.
+    const speed = media.kind === 'image' ? 1 : clipSpeed(clip);
+    const wanted = clip.sourceIn + sourceSpan(clip, seg.start - clip.start - seg.before) * (media.kind === 'image' ? 0 : 1);
     const srcStart = Math.max(0, wanted);
-    const padStart = srcStart - wanted;
+    const padStart = Math.round((srcStart - wanted) / speed);
     const len = seg.end - seg.start + seg.before + seg.after - padStart;
+    const srcLen = len * speed;
     const path = stream === 'a' ? audioPath(clip, media) : resolve(media);
-    const index = inputs.use(`${path}|${srcStart}|${len}`, stream, () => {
+    const index = inputs.use(`${path}|${srcStart}|${srcLen}`, stream, () => {
       if (media.kind === 'image') return ['-loop', '1', '-framerate', String(fps), '-t', sec((len + 1) / fps), '-i', path];
       const seek = srcStart > 0 ? ['-ss', sec(srcStart / fps)] : [];
       const hw = stream === 'v' && req.hwDecode && media.hasVideo ? ['-hwaccel', 'auto'] : [];
       // A little extra so the decoder never runs dry; the filters trim to the exact length.
-      return [...hw, ...seek, '-t', sec((len + 2) / fps), '-i', path];
+      return [...hw, ...seek, '-t', sec((srcLen + 2 * Math.max(1, speed)) / fps), '-i', path];
     });
     return { index, padStart };
   };
@@ -225,7 +261,8 @@ function buildGraph(req: ExportRequest, range: Range, opts: { video: boolean; ma
       const segs = trackSegments(tl, trackId, range);
       // The lowest track can be opaque (cheaper) unless it holds titles or PNGs that may be transparent.
       const opaque =
-        ti === 0 && !segs.some((s) => s.clip && (s.clip.text || /\.png$/i.test(doc.media[s.clip.mediaId]?.path ?? '')));
+        ti === 0 &&
+        !segs.some((s) => s.clip && (s.clip.text || !isIdentityTransform(s.clip.transform) || /\.png$/i.test(doc.media[s.clip.mediaId]?.path ?? '')));
       // Fades to a color are a solid layer whose alpha ramps, overlaid in YUV: exactly the
       // preview's "color drawn over the clip at 1 − factor". (The fade filter can't be used:
       // it only stays in YUV for full-range black, and converts through RGB otherwise.)
@@ -285,13 +322,88 @@ function buildGraph(req: ExportRequest, range: Range, opts: { video: boolean; ma
           chains.push(`[${idx}:v:0]${parts.join(',')}[${rawLabel}]`);
         } else {
           const { index, padStart } = inputFor(seg, 'v');
-          const fit = `scale=${W}:${H}:force_original_aspect_ratio=decrease:force_divisible_by=2`;
-          const pad = `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=${opaque ? 'black' : 'black@0'}`;
+          const clip = seg.clip;
+          const media = doc.media[clip.mediaId]!;
+          const speed = media.kind === 'image' ? 1 : clipSpeed(clip);
           const head = padStart > 0 ? `tpad=start_mode=clone:start=${padStart},` : '';
-          chains.push(
-            `[${index}:v:0]setpts=PTS-STARTPTS,fps=${fps},${head}tpad=stop_mode=clone:stop=-1,trim=end_frame=${n},setpts=PTS-STARTPTS,` +
-              `${fit},${opaque ? '' : 'format=yuva420p,'}${pad},setsar=1,format=${opaque ? 'yuv420p' : 'yuva420p'}[${rawLabel}]`,
-          );
+          const retime = speed !== 1 ? `setpts=PTS/${speed.toFixed(6)},` : '';
+          const base = `[${index}:v:0]setpts=PTS-STARTPTS,${retime}fps=${fps},${head}tpad=stop_mode=clone:stop=-1,trim=end_frame=${n},setpts=PTS-STARTPTS`;
+          // Color: the grade baked into a 3D LUT, applied in RGB (BT.709, like the preview's decode).
+          let color = '';
+          if (clip.color && !isNeutralGrade(clip.color)) {
+            const input = clip.color.lut ? req.inputLuts?.[clip.color.lut.path] : null;
+            if (clip.color.lut && !input) throw new Error(`The LUT "${clip.color.lut.name}" could not be read.`);
+            const cube = joinPath(req.tempDir, `scut-grade-${clip.id}.cube`);
+            if (opts.files && !opts.files.some((f) => f.path === cube)) opts.files.push({ path: cube, content: cubeText(bakeLut(clip.color, input)) });
+            color = `,scale=in_color_matrix=bt709:in_range=tv,format=gbrp,lut3d=file=${filterPath(cube)}:interp=trilinear,scale=out_color_matrix=bt709:out_range=tv`;
+          }
+          const t = transformOf(clip);
+          if (isIdentityTransform(clip.transform)) {
+            const fit = `scale=${W}:${H}:force_original_aspect_ratio=decrease:force_divisible_by=2`;
+            const pad = `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=${opaque ? 'black' : 'black@0'}`;
+            chains.push(`${base},${fit}${color},${opaque ? '' : 'format=yuva420p,'}${pad},setsar=1,format=${opaque ? 'yuv420p' : 'yuva420p'}[${rawLabel}]`);
+          } else {
+            // Transformed: crop -> scale -> (mask, border) -> rotate -> opacity, placed on a
+            // transparent frame; a smooth zoom then magnifies that frame around the picture's center.
+            const { w: sw, h: sh } = mediaPictureSize(media);
+            const zooming = hasZoom(t);
+            const baseScale = zooming ? Math.min(t.scale, t.zoomTo!) : t.scale;
+            const g = pictureGeometry(t, sw, sh, W, H, baseScale);
+            const steps: string[] = [];
+            if (g.sw < 1 || g.sh < 1) steps.push(`crop=w=iw*${g.sw.toFixed(6)}:h=ih*${g.sh.toFixed(6)}:x=iw*${g.sx.toFixed(6)}:y=ih*${g.sy.toFixed(6)}`);
+            steps.push(`scale=${g.cw}:${g.ch}`);
+            const pic = `${label}p`;
+            chains.push(`${base},${steps.join(',')}${color},format=yuva444p${g.cw !== g.pw || g.ch !== g.ph ? `,pad=${g.pw}:${g.ph}:${g.left}:${g.top}:color=black@0` : ''}[${pic}]`);
+            let cur = pic;
+            const imgs = req.clipImages?.[clip.id];
+            const still = (key: string, file: string, fmt: string) => {
+              const idx = inputs.use(`${key}|${clip.id}|${n}`, 'v', () => ['-loop', '1', '-framerate', String(fps), '-t', sec((n + 1) / fps), '-i', file]);
+              const l = `${label}${key}`;
+              chains.push(`[${idx}:v:0]format=${fmt},trim=end_frame=${n},setpts=PTS-STARTPTS[${l}]`);
+              return l;
+            };
+            if (g.radius > 0) {
+              if (!imgs?.mask) throw new Error('A rounded-corner mask has not been rendered for export.');
+              const m = still('mask', imgs.mask, 'gray');
+              chains.push(`[${cur}][${m}]alphamerge[${label}pm]`);
+              cur = `${label}pm`;
+            }
+            if (g.border > 0) {
+              if (!imgs?.ring) throw new Error('A border has not been rendered for export.');
+              const r = still('ring', imgs.ring, 'yuva444p');
+              chains.push(`[${cur}][${r}]overlay=0:0:format=yuv444[${label}pr]`);
+              cur = `${label}pr`;
+            }
+            const post: string[] = [];
+            const rad = (g.rotation * Math.PI) / 180;
+            if (Math.abs(Math.sin(rad)) > 1e-6 || Math.cos(rad) < 0) post.push(`rotate=a=${rad.toFixed(8)}:ow=rotw(${rad.toFixed(8)}):oh=roth(${rad.toFixed(8)}):c=black@0`);
+            if (g.opacity < 1) post.push(`lut=a=val*${g.opacity.toFixed(4)}`);
+            if (post.length) {
+              chains.push(`[${cur}]${post.join(',')}[${label}pp]`);
+              cur = `${label}pp`;
+            }
+            const canvas = `${label}cv`;
+            chains.push(`color=c=black@0:s=${W}x${H}:r=${fps},format=yuva444p,trim=end_frame=${n},setsar=1[${canvas}]`);
+            const placed: string[] = [];
+            if (zooming) {
+              // Frame i of the clip shows scale s(i); the frame rendered at baseScale is magnified by s(i)/baseScale.
+              const i0 = seg.start - clip.start - seg.before;
+              const d = Math.max(1, clip.duration - 1);
+              const ease = `(st(0,clip((in+${i0})/${d},0,1))*ld(0)*(3-2*ld(0)))`;
+              const k = `((${t.scale}+(${t.zoomTo! - t.scale})*${ease})/${baseScale})`;
+              const cx = g.cx.toFixed(3);
+              const cy = g.cy.toFixed(3);
+              const lx = `${cx}-${cx}/${k}`;
+              const rx = `${cx}+(${W}-${cx})/${k}`;
+              const ty = `${cy}-${cy}/${k}`;
+              const by = `${cy}+(${H}-${cy})/${k}`;
+              placed.push(`perspective=x0='${lx}':y0='${ty}':x1='${rx}':y1='${ty}':x2='${lx}':y2='${by}':x3='${rx}':y3='${by}':sense=source:eval=frame:interpolation=linear`);
+            }
+            chains.push(
+              `[${canvas}][${cur}]overlay=x='floor(${g.cx.toFixed(3)}-w/2+0.5)':y='floor(${g.cy.toFixed(3)}-h/2+0.5)':format=yuv444` +
+                `${placed.length ? `,${placed.join(',')}` : ''},format=yuva420p,setsar=1[${rawLabel}]`,
+            );
+          }
         }
         if (seg.fades.length) applyFades(rawLabel, label, seg.fades, seg.before);
         if (seg.join && cur) {
@@ -330,7 +442,7 @@ function buildGraph(req: ExportRequest, range: Range, opts: { video: boolean; ma
   // ---- Audio ---------------------------------------------------------------
   const stereo = `aformat=sample_fmts=fltp:sample_rates=${SAMPLE_RATE}:channel_layouts=stereo`;
   const audioLabels: string[] = [];
-  tracks.audio.forEach((trackId, ti) => {
+  (opts.audio === false ? [] : tracks.audio).forEach((trackId, ti) => {
     const track = getTrack(tl, trackId)!;
     const segs = trackSegments(tl, trackId, range);
     const groups: string[] = [];
@@ -350,7 +462,7 @@ function buildGraph(req: ExportRequest, range: Range, opts: { video: boolean; ma
       const { index, padStart } = inputFor(seg, 'a');
       // Mono plays on both speakers at full level, like the Web Audio preview.
       const pan = media.audioChannels === 1 ? 'pan=stereo|c0=c0|c1=c0,' : '';
-      const fx: string[] = [];
+      const fx: string[] = [...atempo(clipSpeed(clip))];
       if (padStart > 0) fx.push(`adelay=delays=${samplesAt(padStart, fps)}S:all=1`);
       fx.push(`apad`, `atrim=end_sample=${n}`, `asetpts=PTS-STARTPTS`);
       if (clip.volumeDb) fx.push(`volume=${clip.volumeDb.toFixed(2)}dB`);
@@ -391,7 +503,9 @@ function buildGraph(req: ExportRequest, range: Range, opts: { video: boolean; ma
     audioLabels.push(`[ta${ti}]`);
   });
   const master = opts.masterGain && tl.masterGainDb ? `,volume=${tl.masterGainDb.toFixed(2)}dB` : '';
-  if (audioLabels.length === 0) {
+  if (opts.audio === false) {
+    // Video only (thumbnails).
+  } else if (audioLabels.length === 0) {
     chains.push(`anullsrc=r=${SAMPLE_RATE}:cl=stereo,atrim=end_sample=${totalSamples},${stereo}[aout]`);
   } else if (audioLabels.length === 1) {
     chains.push(`${audioLabels[0]}anull${master}[aout]`);
@@ -446,28 +560,35 @@ const COMMON = ['-hide_banner', '-y', '-loglevel', 'error', '-nostdin', '-progre
 export function buildExportPlan(req: ExportRequest): ExportPlan {
   const tl = req.doc.timeline;
   const fps = tl.settings.fps;
-  const { width, height } = FORMATS[tl.settings.format];
+  const { width, height } = outputSize(req);
   const range = { start: Math.max(0, req.range.start), end: req.range.end };
   const frames = range.end - range.start;
   if (frames < 1) throw new Error('Nothing to export: the range is empty.');
+  const audioOnly = req.audioOnly;
   const bitrate = youtubeBitrate(width, height, fps);
   const durationSec = frames / fps;
   const video = [...exportVideoArgs(req.encoder, bitrate, fps), '-r', String(fps), '-fps_mode', 'cfr'];
-  const aac = ['-c:a', 'aac', '-b:a', `${YOUTUBE_AUDIO_BITRATE / 1000}k`, '-ar', String(SAMPLE_RATE), '-ac', '2'];
+  const aac =
+    audioOnly === 'mp3'
+      ? ['-c:a', 'libmp3lame', '-b:a', '320k', '-ar', String(SAMPLE_RATE), '-ac', '2']
+      : audioOnly === 'wav'
+        ? ['-c:a', 'pcm_s16le', '-ar', String(SAMPLE_RATE), '-ac', '2']
+        : ['-c:a', 'aac', '-b:a', `${YOUTUBE_AUDIO_BITRATE / 1000}k`, '-ar', String(SAMPLE_RATE), '-ac', '2'];
+  const container = audioOnly ? [] : ['-movflags', '+faststart'];
   const files: { path: string; content: string }[] = [];
   const tempFiles: string[] = [];
   const jobs: FfmpegJob[] = [];
 
   const passArgs = (r: Range, graphPath: string, tail: string[]) => {
-    const graph = buildGraph(req, r, { video: true, masterGain: true });
-    files.push({ path: graphPath, content: graph.filter });
-    tempFiles.push(graphPath);
+    const extra: { path: string; content: string }[] = [];
+    const graph = buildGraph(req, r, { video: !audioOnly, masterGain: true, files: extra });
+    files.push({ path: graphPath, content: graph.filter }, ...extra.filter((f) => !files.some((x) => x.path === f.path)));
+    tempFiles.push(graphPath, ...extra.map((f) => f.path).filter((x) => !tempFiles.includes(x)));
     return [
       ...COMMON,
       ...graph.inputArgs,
       '-filter_complex_script', graphPath,
-      '-map', '[vout]', '-map', '[aout]',
-      '-frames:v', String(r.end - r.start),
+      ...(audioOnly ? ['-map', '[aout]'] : ['-map', '[vout]', '-map', '[aout]', '-frames:v', String(r.end - r.start)]),
       ...tail,
     ];
   };
@@ -476,7 +597,7 @@ export function buildExportPlan(req: ExportRequest): ExportPlan {
   if (chunks.length === 1) {
     jobs.push({
       label: 'Exporting',
-      args: passArgs(range, joinPath(req.tempDir, 'scut-graph.txt'), [...video, ...aac, '-movflags', '+faststart', req.outputPath]),
+      args: passArgs(range, joinPath(req.tempDir, 'scut-graph.txt'), [...(audioOnly ? [] : video), ...aac, ...container, req.outputPath]),
       durationSec,
     });
   } else {
@@ -490,7 +611,7 @@ export function buildExportPlan(req: ExportRequest): ExportPlan {
       listLines.push(`file '${name}'`);
       jobs.push({
         label: `Exporting part ${i + 1} of ${chunks.length}`,
-        args: passArgs(r, joinPath(req.tempDir, `scut-graph-${i}.txt`), [...video, '-c:a', 'pcm_f32le', out]),
+        args: passArgs(r, joinPath(req.tempDir, `scut-graph-${i}.txt`), [...(audioOnly ? [] : video), '-c:a', 'pcm_f32le', out]),
         durationSec: (r.end - r.start) / fps,
       });
     });
@@ -499,7 +620,7 @@ export function buildExportPlan(req: ExportRequest): ExportPlan {
     tempFiles.push(listPath);
     jobs.push({
       label: 'Finishing',
-      args: [...COMMON, '-f', 'concat', '-safe', '0', '-i', listPath, '-map', '0:v:0', '-map', '0:a:0', '-c:v', 'copy', ...aac, '-movflags', '+faststart', req.outputPath],
+      args: [...COMMON, '-f', 'concat', '-safe', '0', '-i', listPath, ...(audioOnly ? [] : ['-map', '0:v:0', '-c:v', 'copy']), '-map', '0:a:0', ...aac, ...container, req.outputPath],
       durationSec,
     });
   }
@@ -514,7 +635,28 @@ export function buildExportPlan(req: ExportRequest): ExportPlan {
     frames,
     durationSec,
     bitrate,
-    estimatedBytes: Math.round(((bitrate.target + YOUTUBE_AUDIO_BITRATE) * durationSec) / 8),
+    estimatedBytes: Math.round(((audioOnly === 'wav' ? SAMPLE_RATE * 2 * 16 : audioOnly === 'mp3' ? 320000 : bitrate.target + YOUTUBE_AUDIO_BITRATE) * durationSec) / 8),
+  };
+}
+
+/**
+ * One frame of the program as a PNG (thumbnail grab), rendered by the export graph so it is
+ * exactly what the export would show at that frame.
+ */
+export function buildFrameJob(req: Omit<ExportRequest, 'range' | 'encoder'>, frame: Frame): { job: FfmpegJob; files: { path: string; content: string }[] } {
+  const fps = req.doc.timeline.settings.fps;
+  const range = { start: Math.max(0, frame), end: Math.max(0, frame) + 1 };
+  const files: { path: string; content: string }[] = [];
+  const graph = buildGraph({ ...req, range, encoder: 'libx264' }, range, { video: true, audio: false, masterGain: false, files });
+  const graphPath = joinPath(req.tempDir, 'scut-frame.txt');
+  files.push({ path: graphPath, content: `${graph.filter};\n[vout]scale=in_color_matrix=bt709:in_range=tv:out_range=pc,format=rgb24[png]` });
+  return {
+    job: {
+      label: 'Saving frame',
+      args: [...COMMON, ...graph.inputArgs, '-filter_complex_script', graphPath, '-map', '[png]', '-frames:v', '1', '-update', '1', '-c:v', 'png', req.outputPath],
+      durationSec: 1 / fps,
+    },
+    files,
   };
 }
 

@@ -1,3 +1,6 @@
+import { DEFAULT_GRADE } from '../color/grade';
+import { DEFAULT_TRANSFORM } from '../timeline/transform';
+import type { ColorGrade, Transform } from '../types';
 import {
   FORMATS,
   FRAME_RATES,
@@ -26,7 +29,7 @@ import { dirname, relativePath, resolvePath, toNativePath, toPortablePath } from
  *   opened on another platform.
  */
 export const PROJECT_FORMAT = 'simplecut-project';
-export const PROJECT_VERSION = 2;
+export const PROJECT_VERSION = 3;
 export const PROJECT_EXTENSION = '.scut';
 
 export interface ProjectMeta {
@@ -153,6 +156,9 @@ function readClipExtras(c: Record<string, unknown>): Partial<Clip> {
   if (tin) out.transitionIn = tin;
   const tout = readTransition(c.transitionOut);
   if (tout) out.transitionOut = tout;
+  if (num(c.speed, 1) !== 1 && num(c.speed) > 0) out.speed = Math.min(16, Math.max(0.1, num(c.speed)));
+  if (isObj(c.transform)) out.transform = { ...DEFAULT_TRANSFORM, ...(c.transform as object) } as Transform;
+  if (isObj(c.color)) out.color = { ...DEFAULT_GRADE, ...(c.color as object) } as ColorGrade;
   return out;
 }
 
@@ -176,6 +182,7 @@ function readTimeline(raw: unknown): Timeline {
     hidden: bool(t.hidden),
     ...(typeof t.volumeDb === 'number' && Number.isFinite(t.volumeDb) && t.volumeDb !== 0 ? { volumeDb: t.volumeDb } : {}),
     ...(t.music === true ? { music: true } : {}),
+    ...(t.captions === true ? { captions: true } : {}),
   }));
   // Keep the invariant: video tracks first, then audio.
   tracks.sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'video' ? -1 : 1));
@@ -191,7 +198,7 @@ function readTimeline(raw: unknown): Timeline {
       kind: c.kind === 'audio' ? 'audio' : 'video',
       start: Math.max(0, Math.round(num(c.start))),
       duration: Math.max(1, Math.round(num(c.duration, 1))),
-      sourceIn: Math.max(0, Math.round(num(c.sourceIn))),
+      sourceIn: Math.max(0, Math.round(num(c.sourceIn) * 1e6) / 1e6),
     };
     if (typeof c.linkId === 'string' && c.linkId) clip.linkId = c.linkId;
     if (typeof c.groupId === 'string' && c.groupId) clip.groupId = c.groupId;

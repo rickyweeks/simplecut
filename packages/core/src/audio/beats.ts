@@ -417,13 +417,13 @@ function refineOnset(samples: Float32Array, sampleRate: number, approxSec: numbe
 /** Beat times (seconds into the media) that fall inside a clip, as timeline frames. */
 export function beatFramesInClip(
   analysis: BeatAnalysis,
-  clip: { start: number; duration: number; sourceIn: number },
+  clip: { start: number; duration: number; sourceIn: number; speed?: number },
   fps: number,
   which: 'beats' | 'downbeats' = 'beats',
 ): number[] {
   const out: number[] = [];
   for (const sec of analysis[which]) {
-    const f = clip.start + Math.round(sec * fps) - clip.sourceIn;
+    const f = clip.start + Math.round((sec * fps - clip.sourceIn) / (clip.speed ?? 1));
     if (f >= clip.start && f < clip.start + clip.duration) out.push(f);
   }
   return out;

@@ -85,9 +85,10 @@ export function dialogueRegions(tl: Timeline, media: Record<string, MediaItem | 
       const gain = dbToGain(c.volumeDb ?? 0) * trackGain(track);
       const startSec = c.start / fps;
       const n = Math.floor((c.duration / fps) * WAVEFORM_PEAKS_PER_SECOND);
-      const src0 = Math.round((c.sourceIn / fps) * WAVEFORM_PEAKS_PER_SECOND);
+      const src0 = (c.sourceIn / fps) * WAVEFORM_PEAKS_PER_SECOND;
+      const speed = c.speed ?? 1;
       for (let i = 0; i < n; i++) {
-        const v = p[src0 + i];
+        const v = p[Math.round(src0 + i * speed)];
         if (v !== undefined && v * gain >= SPEECH_THRESHOLD) active.push(Math.round((startSec + i * step) * WAVEFORM_PEAKS_PER_SECOND));
       }
     }

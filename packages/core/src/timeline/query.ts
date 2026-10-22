@@ -220,3 +220,23 @@ export function markedRange(tl: Timeline): Range | null {
   const end = tl.outPoint != null ? tl.outPoint + 1 : Math.max(timelineDuration(tl), start + 1);
   return end > start ? { start, end } : null;
 }
+
+// ---------------------------------------------------------------------------
+// Speed: timeline time -> source time
+// ---------------------------------------------------------------------------
+
+export const clipSpeed = (c: Pick<Clip, 'speed'>): number => c.speed ?? 1;
+
+/** Source position (in timeline-rate frames, possibly fractional) shown at timeline frame `f`. */
+export function sourceFrameAt(c: Pick<Clip, 'start' | 'sourceIn' | 'speed'>, f: number): number {
+  return c.sourceIn + (f - c.start) * clipSpeed(c);
+}
+
+/** How many source frames `frames` timeline frames of the clip use. */
+export const sourceSpan = (c: Pick<Clip, 'speed'>, frames: number): number => frames * clipSpeed(c);
+
+/** Timeline length for `sourceFrames` of source at the clip's speed. */
+export const timelineSpan = (c: Pick<Clip, 'speed'>, sourceFrames: number): Frame => Math.max(1, Math.round(sourceFrames / clipSpeed(c)));
+
+/** Keeps fractional source positions tidy (no 0.30000000000000004 in project files). */
+export const tidy = (n: number): number => Math.round(n * 1e6) / 1e6;

@@ -97,6 +97,19 @@ export interface MediaItem extends MediaInfo {
   path: string;
   /** Present once the audio has been analysed for beats. */
   beats?: BeatAnalysis;
+  /** A file SimpleCut made from another media item (e.g. a reversed copy of part of it). */
+  derived?: DerivedMedia;
+}
+
+/**
+ * A reversed copy of [inSec, outSec) of another media item: time t in this file is time
+ * outSec - t in the original. Kept in the media cache; rebuilt from the original if missing.
+ */
+export interface DerivedMedia {
+  from: Id;
+  op: 'reverse';
+  inSec: number;
+  outSec: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -123,6 +136,8 @@ export interface Track {
    * it automatically ducks under dialogue on the other tracks.
    */
   music?: boolean;
+  /** Video: the captions track (auto captions live here; exported as .srt). */
+  captions?: boolean;
 }
 
 /**
@@ -175,6 +190,58 @@ export interface TextContent extends TextStyle {
   preset?: string;
 }
 
+/**
+ * Where a clip's picture sits in the frame. At the defaults the picture is fitted
+ * (letterboxed) and centered, exactly as in Phase 1. Crop removes edges without moving
+ * what's left (like Premiere); rotation and zoom pivot on the picture's center.
+ */
+export interface Transform {
+  /** Center of the picture as a fraction of the frame. */
+  x: number;
+  y: number;
+  /** 1 = the size that fits (or fills) the frame. */
+  scale: number;
+  /** Degrees, clockwise. */
+  rotation: number;
+  /** Fractions of the source picture removed from each edge. */
+  cropLeft: number;
+  cropTop: number;
+  cropRight: number;
+  cropBottom: number;
+  /** 0..1. */
+  opacity: number;
+  /** 'fit' letterboxes the whole picture; 'fill' covers the frame (center crop, used for Shorts). */
+  fit: 'fit' | 'fill';
+  /** Rounded corners: radius as a fraction of the picture's shorter side (0..0.5). */
+  radius: number;
+  /** Border drawn just inside the picture edge, in pixels at 1080p (0 = none). */
+  borderWidth: number;
+  borderColor: string;
+  /** Smooth zoom: when set, the scale moves from `scale` at the first frame to this at the last. */
+  zoomTo?: number;
+}
+
+export type LookId = 'none' | 'warm' | 'cool' | 'punchy' | 'film' | 'tealOrange' | 'vintage' | 'moody' | 'bw';
+
+/** Color correction. All zero / 'none' = untouched. */
+export interface ColorGrade {
+  /** Stops, -3..3. */
+  exposure: number;
+  /** -100..100. */
+  contrast: number;
+  /** -100 (black and white) .. 100. */
+  saturation: number;
+  /** -100 (cooler / blue) .. 100 (warmer / orange). */
+  temperature: number;
+  /** -100 (green) .. 100 (magenta). */
+  tint: number;
+  look: LookId;
+  /** How strongly the look applies, 0..1. */
+  lookAmount: number;
+  /** An imported .cube LUT, applied first (e.g. to turn log footage into normal-looking video). */
+  lut?: { path: string; name: string };
+}
+
 /** Clips that are titles have no media; their mediaId is this value. */
 export const TEXT_MEDIA_ID = '';
 
@@ -203,6 +270,15 @@ export interface Clip {
   denoise?: number;
   /** Present on title clips (video tracks only). */
   text?: TextContent;
+  /**
+   * Playback speed (1 = normal; 2 = twice as fast). Audio keeps its pitch. Source time at
+   * timeline frame f is (sourceIn + (f - start) * speed) / fps, so sourceIn may be fractional.
+   */
+  speed?: number;
+  /** Video: position, size, rotation, crop, opacity, corners and border. */
+  transform?: Transform;
+  /** Video: color correction. */
+  color?: ColorGrade;
   transitionIn?: Transition;
   transitionOut?: Transition;
 }

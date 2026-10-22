@@ -1,7 +1,7 @@
 import { mediaFrameCount } from '../time';
 import type { Clip, Frame, Id, MediaInfo, Timeline } from '../types';
 import { setClips, shiftClips } from './primitives';
-import { clipEnd, clipsOnTrack, isRangeEmpty, isTrackLocked, linkedClips, unlockedTrackIds } from './query';
+import { clipEnd, clipSpeed, clipsOnTrack, isRangeEmpty, isTrackLocked, linkedClips, sourceSpan, tidy, unlockedTrackIds } from './query';
 
 export type Edge = 'start' | 'end';
 export type MediaLookup = Record<Id, Pick<MediaInfo, 'kind' | 'durationSec'> | undefined>;
@@ -24,11 +24,12 @@ export function trimLimits(tl: Timeline, media: MediaLookup, clips: Clip[], edge
   for (const c of clips) {
     const m = media[c.mediaId];
     // Offline media: allow shortening but not extending past what we know.
-    const total = c.text ? Number.POSITIVE_INFINITY : m ? mediaFrameCount(m, fps) : c.sourceIn + c.duration;
+    const total = c.text ? Number.POSITIVE_INFINITY : m ? mediaFrameCount(m, fps) : c.sourceIn + sourceSpan(c, c.duration);
+    const s = clipSpeed(c);
     const others = clipsOnTrack(tl, c.trackId).filter((o) => !ids.has(o.id));
     if (edge === 'start') {
       max = Math.min(max, c.duration - 1);
-      min = Math.max(min, -c.sourceIn);
+      min = Math.max(min, -Math.floor(c.sourceIn / s + 1e-9));
       if (!ripple) {
         min = Math.max(min, -c.start);
         const prevEnd = Math.max(0, ...others.filter((o) => clipEnd(o) <= c.start).map(clipEnd));
@@ -36,7 +37,7 @@ export function trimLimits(tl: Timeline, media: MediaLookup, clips: Clip[], edge
       }
     } else {
       min = Math.max(min, -(c.duration - 1));
-      max = Math.min(max, total - c.sourceIn - c.duration);
+      max = Math.min(max, Math.floor((total - c.sourceIn) / s + 1e-9) - c.duration);
       if (!ripple) {
         const nexts = others.filter((o) => o.start >= clipEnd(c)).map((o) => o.start);
         if (nexts.length) max = Math.min(max, Math.min(...nexts) - clipEnd(c));
@@ -51,7 +52,7 @@ export function trimLimits(tl: Timeline, media: MediaLookup, clips: Clip[], edge
  * closing requires the closed range to be empty there, opening requires that no clip
  * straddles the edit point.
  */
-function rippleOtherTracks(tl: Timeline, skipTracks: Set<Id>, at: Frame, shift: Frame): Timeline {
+export function rippleOtherTracks(tl: Timeline, skipTracks: Set<Id>, at: Frame, shift: Frame): Timeline {
   if (shift === 0) return tl;
   const tracks = unlockedTrackIds(tl).filter((t) => {
     if (skipTracks.has(t)) return false;
@@ -85,7 +86,7 @@ export function trimClips(
     return setClips(
       tl,
       clips.map((c) =>
-        edge === 'start' ? { ...c, start: c.start + d, sourceIn: c.sourceIn + d, duration: c.duration - d } : { ...c, duration: c.duration + d },
+        edge === 'start' ? { ...c, start: c.start + d, sourceIn: tidy(c.sourceIn + sourceSpan(c, d)), duration: c.duration - d } : { ...c, duration: c.duration + d },
       ),
     );
   }
@@ -97,7 +98,7 @@ export function trimClips(
   for (const c of clips) {
     involved.add(c.trackId);
     const oldEnd = clipEnd(c);
-    const updated = edge === 'start' ? { ...c, sourceIn: c.sourceIn + d, duration: c.duration - d } : { ...c, duration: c.duration + d };
+    const updated = edge === 'start' ? { ...c, sourceIn: tidy(c.sourceIn + sourceSpan(c, d)), duration: c.duration - d } : { ...c, duration: c.duration + d };
     // Shift followers on this track first (the trimmed clip itself starts before oldEnd).
     out = shiftClips(out, [c.trackId], oldEnd, shift);
     out = setClips(out, [updated]);
