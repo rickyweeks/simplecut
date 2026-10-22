@@ -14,6 +14,8 @@ extraResources:
     to: bin
     filter:
       - "*.exe"
+      - "whisper/*.exe"
+      - "whisper/*.dll"
 asar: true
 npmRebuild: false
 win:

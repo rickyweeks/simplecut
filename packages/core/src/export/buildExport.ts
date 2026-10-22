@@ -679,3 +679,24 @@ export function buildLoudnessJob(req: Omit<ExportRequest, 'outputPath' | 'encode
     files: [{ path: graphPath, content: filter }],
   };
 }
+
+/**
+ * The timeline's speech for auto captions: every audible track except the music track,
+ * mixed to the 16 kHz mono WAV whisper.cpp reads.
+ */
+export function buildSpeechJob(req: Omit<ExportRequest, 'encoder' | 'duckRegions'>): { job: FfmpegJob; files: { path: string; content: string }[] } {
+  const tl = req.doc.timeline;
+  const fps = tl.settings.fps;
+  const range = { start: Math.max(0, req.range.start), end: req.range.end };
+  const timeline = { ...tl, tracks: tl.tracks.map((t) => (t.music ? { ...t, muted: true, solo: false } : t)) };
+  const graph = buildGraph({ ...req, doc: { ...req.doc, timeline }, range, encoder: 'libx264' }, range, { video: false, masterGain: false });
+  const graphPath = joinPath(req.tempDir, 'scut-speech.txt');
+  return {
+    job: {
+      label: 'Preparing the speech',
+      args: [...COMMON, ...graph.inputArgs, '-filter_complex_script', graphPath, '-map', '[sp]', '-c:a', 'pcm_s16le', '-ar', '16000', '-ac', '1', req.outputPath],
+      durationSec: (range.end - range.start) / fps,
+    },
+    files: [{ path: graphPath, content: `${graph.filter};\n[aout]pan=mono|c0=0.5*c0+0.5*c1,aresample=16000[sp]` }],
+  };
+}

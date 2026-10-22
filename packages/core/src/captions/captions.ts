@@ -24,32 +24,60 @@ export interface Caption {
   end: number;
 }
 
-/** whisper-cli arguments: English, one segment per word, JSON output next to `outBase`. */
-export function whisperArgs(modelPath: string, wavPath: string, outBase: string, threads: number): string[] {
-  return ['-m', modelPath, '-f', wavPath, '-l', 'en', '-ml', '1', '-sow', '-oj', '-of', outBase, '-t', String(Math.max(1, threads)), '-pp', '-np'];
+/**
+ * whisper-cli arguments: English, full JSON with token-level DTW timestamps. (Segment and
+ * token offsets are unreliable after silence; DTW times track the actual speech. DTW needs
+ * flash attention off.)
+ */
+export function whisperArgs(modelPath: string, wavPath: string, outBase: string, threads: number, dtwModel = 'base.en'): string[] {
+  return ['-m', modelPath, '-f', wavPath, '-l', 'en', '-ojf', '-dtw', dtwModel, '-nfa', '-of', outBase, '-t', String(Math.max(1, threads)), '-pp', '-np'];
 }
 
-/** Reads whisper-cli's JSON (offsets in ms) into words, shifted to timeline seconds. */
+interface WhisperToken {
+  text?: string;
+  offsets?: { from?: number; to?: number };
+  /** Centiseconds, -1 when not computed. */
+  t_dtw?: number;
+}
+
+/**
+ * Reads whisper-cli's full JSON into words (timeline seconds). Words are rebuilt from tokens
+ * (a token starting with a space starts a word; others, like "." or "'s", attach to it) and
+ * timed by DTW, falling back to token offsets. A word ends where the next begins, unless
+ * there's a pause.
+ */
 export function parseWhisperJson(json: string, offsetSec = 0): CaptionWord[] {
-  const raw = JSON.parse(json) as { transcription?: { offsets?: { from?: number; to?: number }; text?: string }[] };
+  const raw = JSON.parse(json) as { transcription?: { offsets?: { from?: number; to?: number }; text?: string; tokens?: WhisperToken[] }[] };
   const words: CaptionWord[] = [];
+  let cur: { text: string; start: number } | null = null;
+  const flush = () => {
+    if (cur && cur.text.trim()) words.push({ text: cur.text.trim(), start: cur.start, end: cur.start });
+    cur = null;
+  };
   for (const seg of raw.transcription ?? []) {
-    const text = (seg.text ?? '').trim();
-    const from = Number(seg.offsets?.from);
-    const to = Number(seg.offsets?.to);
-    if (!text || !Number.isFinite(from) || !Number.isFinite(to)) continue;
-    // Whisper marks non-speech like [MUSIC] or (laughs); captions skip those.
-    if (/^[[(].*[\])]$/.test(text)) continue;
-    // Punctuation sometimes arrives as its own segment: glue it to the previous word.
-    if (/^[.,!?;:%)\]'"…-]+$/.test(text) && words.length) {
-      const last = words[words.length - 1]!;
-      last.text += text;
-      last.end = Math.max(last.end, offsetSec + to / 1000);
-      continue;
+    const tokens = seg.tokens ?? [{ text: seg.text, offsets: seg.offsets }];
+    for (const t of tokens) {
+      const text = t.text ?? '';
+      if (!text || text.startsWith('[_')) continue;
+      const time = t.t_dtw != null && t.t_dtw >= 0 ? t.t_dtw / 100 : Number(t.offsets?.from ?? 0) / 1000;
+      if (/^\s/.test(text) || !cur) {
+        flush();
+        cur = { text, start: offsetSec + time };
+      } else {
+        (cur as { text: string }).text += text;
+      }
     }
-    words.push({ text, start: offsetSec + from / 1000, end: offsetSec + Math.max(from, to) / 1000 });
+    flush();
   }
-  return words;
+  // Whisper marks non-speech like [MUSIC] or (laughs); captions skip those.
+  const spoken = words.filter((w) => !/^[[(].*[\])][.,!?]*$/.test(w.text));
+  spoken.forEach((w, i) => {
+    const next = spoken[i + 1];
+    w.start = Math.max(0, w.start - 0.05);
+    const guess = w.start + Math.min(0.9, 0.12 + 0.06 * w.text.length);
+    w.end = next && next.start - 0.05 < guess + 0.25 ? Math.max(w.start + 0.05, next.start - 0.05) : guess;
+  });
+  return spoken;
 }
 
 export interface GroupOptions {

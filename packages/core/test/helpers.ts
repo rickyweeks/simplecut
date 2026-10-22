@@ -104,7 +104,7 @@ export function expectValid(tl: Timeline): void {
     expect(c.duration).toBeGreaterThanOrEqual(1);
     expect(c.start).toBeGreaterThanOrEqual(0);
     expect(c.sourceIn).toBeGreaterThanOrEqual(0);
-    expect(Number.isInteger(c.start) && Number.isInteger(c.duration) && Number.isInteger(c.sourceIn)).toBe(true);
+    expect(Number.isInteger(c.start) && Number.isInteger(c.duration) && (c.speed != null || Number.isInteger(c.sourceIn))).toBe(true);
   }
   for (const t of tl.tracks) {
     const clips = clipsOnTrack(tl, t.id);

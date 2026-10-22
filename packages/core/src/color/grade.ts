@@ -124,9 +124,9 @@ const luma = (r: number, g: number, b: number) => 0.2126 * r + 0.7152 * g + 0.07
 export function whiteBalanceGains(temperature: number, tint: number): [number, number, number] {
   const t = temperature / 100;
   const m = tint / 100;
-  const r = Math.pow(2, 0.35 * t);
-  const g = Math.pow(2, -0.3 * m);
-  const b = Math.pow(2, -0.35 * t);
+  const r = Math.pow(2, 0.5 * t);
+  const g = Math.pow(2, -0.4 * m);
+  const b = Math.pow(2, -0.5 * t);
   const y = luma(r, g, b);
   return [r / y, g / y, b / y];
 }
@@ -281,8 +281,8 @@ export function autoColor(rgb: Uint8Array): Pick<ColorGrade, 'exposure' | 'contr
   let temperature = 0;
   let tint = 0;
   if (count > n * 0.05 && sr > 0 && sg > 0 && sb > 0) {
-    temperature = (Math.log2(sb / sr) / 0.7) * 100 * 0.75;
-    tint = (-Math.log2(Math.sqrt(sr * sb) / sg) / 0.3) * 100 * 0.75;
+    temperature = (Math.log2(sb / sr) / 1.0) * 100 * 0.75;
+    tint = (-Math.log2(Math.sqrt(sr * sb) / sg) / 0.4) * 100 * 0.75;
   }
   const exposure = p50 > 0.01 ? Math.log2(toLinear(0.45) / toLinear(p50)) * 0.6 : 0;
   const spread = p99 - p01;
