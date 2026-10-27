@@ -75,6 +75,8 @@ export interface MediaInfo {
   /** Rotation from container metadata, degrees clockwise (0, 90, 180, 270). */
   rotation: number;
   fileSize: number;
+  /** ffprobe's format_name (e.g. "avi"). Absent in projects saved before 1.0.2. */
+  container?: string;
 }
 
 /** Result of beat analysis on a media file's audio. Times are seconds into the media. */

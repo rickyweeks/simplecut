@@ -273,7 +273,7 @@ Set `SIMPLECUT_USER_DATA` to use another folder (used by the tests; also works a
 ## Phase 1 scope (done)
 
 - Projects: new/open/save, autosave every 60 s, crash recovery, relink missing media
-- Import MP4, MOV, MKV, WebM, MP3, WAV, AAC, M4A, PNG, JPG (drag and drop or dialog)
+- Import MP4, MOV, MKV, WebM, AVI, MP3, WAV, AAC, M4A, PNG, JPG (drag and drop or dialog)
 - ffprobe-based import, VFR detection with automatic constant-frame-rate proxies, background
   proxies for 4K/high-bitrate/unsupported codecs with progress
 - Source monitor: J/K/L, frame stepping, I/O, insert/overwrite, V/A source toggles, video-only and

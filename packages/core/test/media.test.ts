@@ -42,6 +42,14 @@ const mp3WithCover = {
   format: { format_name: 'mp3', duration: '201.5' },
 };
 
+const aviH264 = {
+  streams: [
+    { codec_type: 'video', codec_name: 'h264', width: 1280, height: 720, pix_fmt: 'yuv420p', r_frame_rate: '30/1', avg_frame_rate: '30/1' },
+    { codec_type: 'audio', codec_name: 'mp3', channels: 2, sample_rate: '44100' },
+  ],
+  format: { format_name: 'avi', duration: '10.0', bit_rate: '4000000' },
+};
+
 const png = {
   streams: [{ codec_type: 'video', codec_name: 'png', width: 1280, height: 720, pix_fmt: 'rgba', r_frame_rate: '25/1', avg_frame_rate: '0/0' }],
   format: { format_name: 'png_pipe' },
@@ -110,6 +118,14 @@ describe('proxy rules', () => {
     expect(proxyReasons(parseProbe(obs, 'o.mkv'))).toEqual([]);
     expect(proxyReasons(parseProbe(mp3WithCover, 's.mp3'))).toEqual([]);
     expect(proxyReasons(parseProbe(png, 'p.png'))).toEqual([]);
+  });
+
+  it('proxies AVI files even when their codecs are playable', () => {
+    const avi = parseProbe(aviH264, 'C:/cam/CLIP0001.AVI');
+    expect(avi).toMatchObject({ kind: 'video', container: 'avi', videoCodec: 'h264' });
+    expect(proxyReasons(avi)).toEqual(['codec']);
+    // Projects saved before the container was recorded keep their old behaviour.
+    expect(proxyReasons({ ...avi, container: undefined })).toEqual([]);
   });
 });
 

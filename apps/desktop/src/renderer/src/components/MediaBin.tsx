@@ -70,7 +70,7 @@ export function MediaBin() {
             <div>
               <FolderInput className="empty-icon" size={28} />
               <h3>Drag videos here to start</h3>
-              Or import MP4, MOV, MKV, WebM, MP3, WAV, AAC, PNG and JPG files.
+              Or import MP4, MOV, MKV, WebM, AVI, MP3, WAV, AAC, PNG and JPG files.
               <br />
               <button type="button" className="btn" onClick={() => void importDialog()}>
                 <Import size={14} /> Import media

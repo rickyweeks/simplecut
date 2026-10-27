@@ -19,6 +19,8 @@ export type ProxyReason =
 const PLAYABLE_VIDEO = new Set(['h264', 'vp8', 'vp9', 'av1']);
 const PLAYABLE_PIXFMT = new Set(['yuv420p', 'yuvj420p']);
 const PLAYABLE_AUDIO = new Set(['aac', 'mp3', 'opus', 'vorbis', 'flac', 'pcm_s16le', 'pcm_s24le', 'pcm_f32le', 'pcm_u8']);
+/** Containers Chromium can't open at all, whatever codecs they hold. */
+const UNPLAYABLE_CONTAINERS = new Set(['avi']);
 
 const MAX_PREVIEW_LONG_SIDE = 2560;
 const MAX_PREVIEW_BITRATE = 40_000_000;
@@ -35,7 +37,8 @@ export function proxyReasons(info: MediaInfo): ProxyReason[] {
   if (info.bitRate > MAX_PREVIEW_BITRATE) reasons.push('bitrate');
   const badVideo = !info.videoCodec || !PLAYABLE_VIDEO.has(info.videoCodec) || (info.pixFmt != null && !PLAYABLE_PIXFMT.has(info.pixFmt));
   const badAudio = info.hasAudio && !!info.audioCodec && !PLAYABLE_AUDIO.has(info.audioCodec);
-  if (badVideo || badAudio) reasons.push('codec');
+  const badContainer = !!info.container && UNPLAYABLE_CONTAINERS.has(info.container);
+  if (badVideo || badAudio || badContainer) reasons.push('codec');
   return reasons;
 }
 
