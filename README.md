@@ -1,6 +1,6 @@
 # SimpleCut
 
-A beginner-friendly video editor for YouTube on Windows: "Premiere Pro with the fluff removed".
+A beginner-friendly video editor for YouTube on Windows.
 Same core shortcuts and source/program workflow as Premiere, but only what simple YouTube edits need.
 Dark UI: true black behind the picture and between panels, charcoal panels and controls.
 
