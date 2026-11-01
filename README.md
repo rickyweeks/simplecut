@@ -1,7 +1,7 @@
 # SimpleCut
 
 A beginner-friendly video editor for YouTube on Windows.
-Same core shortcuts and source/program workflow as Premiere, but only what simple YouTube edits need.
+
 Dark UI: true black behind the picture and between panels, charcoal panels and controls.
 
 **Status: all four phases are complete** — core editing; audio, music beats, titles and
@@ -191,9 +191,6 @@ platform interfaces with its own storage, FFmpeg and preview.
   timeline auto-matching the first clip's frame rate.
 - **Immutable edits + snapshot history.** Each edit returns a new timeline that shares unchanged
   clips with the old one, so unlimited undo is cheap and the history list is just a list of states.
-- **Premiere semantics where it matters.** Insert ripples all unlocked tracks; dragging overwrites
-  (Ctrl inserts, Alt duplicates); Ctrl-dragging an edge ripple-trims; linked video/audio move and
-  trim together (Alt for one side); locked tracks are never touched.
 - **Ripple that never chops your music.** Ripple delete, Q/W and gap closing close the hole on every
   track that is *empty* in that range; a track with material spanning the cut (a music bed) is left
   alone. Extract (`'`) deliberately removes the range from every unlocked track.
